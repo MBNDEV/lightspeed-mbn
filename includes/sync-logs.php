@@ -114,6 +114,29 @@ function ls_motors_log( $sync_data, $run_id ) {
 }
 
 /**
+ * Log sync progress (one entry per chunk) for Sync Logs display.
+ *
+ * @param string $run_id         Run identifier.
+ * @param string $type           'woo' or 'motors'.
+ * @param string $cmf            CMF identifier.
+ * @param int    $cursor         Next offset (after this chunk).
+ * @param int    $count          Items in this chunk.
+ * @param string $action         'sync', 'review', or 'sync_new'.
+ * @param int    $total_processed Total processed so far.
+ */
+function ls_sync_progress_log( $run_id, $type, $cmf, $cursor, $count, $action, $total_processed = 0 ) {
+    $endpoint = 'sync-progress:' . $type . ':' . $cmf . ':cursor:' . $cursor;
+    $body     = wp_json_encode( [ 'cursor' => $cursor, 'count' => $count, 'action' => $action, 'total_processed' => $total_processed ] );
+    ls_motors_log( [
+        'StockNumber'   => $cmf,
+        'endpoint'      => $endpoint,
+        'response_body' => $body,
+        'headers'       => [],
+        'status_code'   => 200,
+    ], $run_id );
+}
+
+/**
  * No-op: file-based sync log removed; only API logs are stored in DB.
  *
  * @param mixed $sync_data Unused.
@@ -257,13 +280,24 @@ function ls_display_log_files() {
                 echo '<p><strong>Method:</strong> ' . esc_html( $row['method'] ?? '' ) . '</p>';
                 echo '<p><strong>Response summary:</strong> ' . esc_html( $row['response_summary'] ?? '' ) . '</p>';
             } else {
+                $ep = $row['endpoint'] ?? '';
                 echo '<p><strong>Run ID:</strong> ' . esc_html( $row['run_id'] ?? '' ) . ' &nbsp; <strong>Stock #:</strong> ' . esc_html( $row['stock_number'] ?? '' ) . ' &nbsp; <strong>Status:</strong> ' . esc_html( $row['status_code'] ?? '' ) . ' &nbsp; <strong>Time:</strong> ' . esc_html( $row['created_at'] ?? '' ) . '</p>';
-                echo '<p><strong>Endpoint:</strong><br><code style="word-break:break-all;">' . esc_html( $row['endpoint'] ?? '' ) . '</code></p>';
+                if ( strpos( $ep, 'sync-progress:' ) === 0 ) {
+                    echo '<p><strong>Type:</strong> Sync progress</p>';
+                }
+                echo '<p><strong>Endpoint:</strong><br><code style="word-break:break-all;">' . esc_html( $ep ) . '</code></p>';
                 if ( ! empty( $row['headers'] ) ) {
                     $headers = json_decode( $row['headers'], true );
                     echo '<p><strong>Headers:</strong></p><pre style="background:#f5f5f5;padding:10px;overflow:auto;">' . esc_html( is_array( $headers ) ? wp_json_encode( $headers, JSON_PRETTY_PRINT ) : $row['headers'] ) . '</pre>';
                 }
-                echo '<p><strong>Response body:</strong></p><pre style="background:#f5f5f5;padding:10px;overflow:auto;max-height:400px;">' . esc_html( $row['response_body'] ?? '' ) . '</pre>';
+                $body = $row['response_body'] ?? '';
+                if ( strpos( $ep, 'sync-progress:' ) === 0 && $body !== '' ) {
+                    $decoded = json_decode( $body, true );
+                    if ( is_array( $decoded ) ) {
+                        echo '<p><strong>Progress:</strong> cursor ' . (int) ( $decoded['cursor'] ?? 0 ) . ', ' . (int) ( $decoded['count'] ?? 0 ) . ' items, action: ' . esc_html( $decoded['action'] ?? '' ) . ( isset( $decoded['total_processed'] ) ? ', ' . (int) $decoded['total_processed'] . ' total' : '' ) . '</p>';
+                    }
+                }
+                echo '<p><strong>Response body:</strong></p><pre style="background:#f5f5f5;padding:10px;overflow:auto;max-height:400px;">' . esc_html( $body ) . '</pre>';
             }
             echo '<a href="' . esc_url( $back_url ) . '" class="button">Back to API Logs</a>';
             return;
@@ -388,11 +422,21 @@ function ls_display_log_files() {
         echo '<table class="widefat fixed striped" cellspacing="0"><thead><tr><th>ID</th><th>Run ID</th><th>Stock #</th><th>Endpoint</th><th>Status</th><th>Date / Time</th><th>View</th></tr></thead><tbody>';
         foreach ( $rows as $row ) {
             $view_url = admin_url( 'admin.php?page=ls-sync-logs&log_id=' . (int) $row['id'] . ls_sync_logs_query_string( array_merge( $base_args, [ 'paged' => $page ] ) ) );
+            $endpoint_display = $row['endpoint'] ?? '';
+            if ( strpos( $endpoint_display, 'sync-progress:' ) === 0 && ! empty( $row['response_body'] ) ) {
+                $decoded = json_decode( $row['response_body'], true );
+                if ( is_array( $decoded ) && isset( $decoded['count'], $decoded['action'] ) ) {
+                    $endpoint_display = 'Sync progress — ' . (int) $decoded['count'] . ' items, ' . esc_html( $decoded['action'] ?? '' );
+                    if ( ! empty( $decoded['total_processed'] ) ) {
+                        $endpoint_display .= ', ' . (int) $decoded['total_processed'] . ' total';
+                    }
+                }
+            }
             echo '<tr>';
             echo '<td>' . (int) $row['id'] . '</td>';
             echo '<td>' . esc_html( $row['run_id'] ?? '' ) . '</td>';
             echo '<td>' . esc_html( $row['stock_number'] ?? '' ) . '</td>';
-            echo '<td><code style="word-break:break-all;font-size:11px;">' . esc_html( $row['endpoint'] ?? '' ) . '</code></td>';
+            echo '<td><code style="word-break:break-all;font-size:11px;">' . esc_html( $endpoint_display ) . '</code></td>';
             echo '<td>' . esc_html( $row['status_code'] ?? '' ) . '</td>';
             echo '<td>' . esc_html( $row['created_at'] ?? '' ) . '</td>';
             echo '<td><a href="' . esc_url( $view_url ) . '">Details</a></td>';

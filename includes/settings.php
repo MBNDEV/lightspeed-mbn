@@ -190,11 +190,14 @@ function ls_render_settings_page() {
     <?php
 }
 
-//Add a function that runs when the ls_auto_sync_cron event is triggered.
 add_action( 'ls_auto_sync_cron', 'handle_ls_auto_sync_cron' );
 
+/**
+ * Cron motors sync: same chunked process as admin (paged API, LS_SYNC_CHUNK_SIZE, time cap).
+ * State in ls_cron_motors_state; each run processes one chunk then exits; next run continues.
+ */
 function handle_ls_auto_sync_cron() {
-    error_log('handle_ls_auto_sync_cron triggered at ' . date('Y-m-d H:i:s'));
+    error_log( 'handle_ls_auto_sync_cron triggered at ' . date( 'Y-m-d H:i:s' ) );
     $run_id = date( 'Y-m-d_H-i-s' );
      ls_motors_log([
         'message' => "Cron job triggered"
@@ -228,51 +231,74 @@ function handle_ls_auto_sync_cron() {
     // }
 
     if ( empty( $auto_sync_list2 ) ) {
-        ls_motors_log([
-            'message' => "No CMFs available for auto-sync."
-        ], $run_id);
-        return; // No CMFs to sync.
+        ls_motors_log( [ 'message' => 'No CMFs available for auto-sync.' ], $run_id );
+        delete_option( 'ls_cron_motors_state' );
+        return;
     }
 
-    foreach ( $auto_sync_list2 as $cmf ) {
-        // ls_log( "Processing CMF: {$cmf}" );
-        // Fetch data for the current CMF.
-        $motors = ls_sync_major_unit( $cmf );
+    $chunk_size = defined( 'LS_SYNC_CHUNK_SIZE' ) ? LS_SYNC_CHUNK_SIZE : 15;
+    $max_sec    = defined( 'LS_SYNC_MAX_SEC_PER_REQUEST' ) ? LS_SYNC_MAX_SEC_PER_REQUEST : 20;
+    $state_key  = 'ls_cron_motors_state';
 
-        // Sync each part to WooCommerce.
-        if ( is_array( $motors ) ) {
-            $run_id = date( 'Y-m-d_H-i-s' );
-            
-            ls_motors_log([
-                'Count' => count($motors),
-            ], $run_id);
-            foreach ( $motors as $part ) {
-                ls_motors_log([
-                    'message' => "Synced unit - {$part['StockNumber']}"
-                ], $run_id);
-                sync_part_to_motors( $part, $run_id );
+    $state     = get_option( $state_key, [] );
+    $cmf_index = isset( $state['cmf_index'] ) ? (int) $state['cmf_index'] : 0;
+    $cursor    = isset( $state['cursor'] ) ? (int) $state['cursor'] : 0;
+
+    if ( $cmf_index >= count( $auto_sync_list2 ) ) {
+        $cmf_index = 0;
+        $cursor    = 0;
+    }
+
+    $cmf  = $auto_sync_list2[ $cmf_index ];
+    $data = ls_sync_major_unit_page( $cmf, $cursor, $chunk_size, $run_id );
+
+    if ( is_string( $data ) ) {
+        ls_motors_log( [ 'message' => 'Failed to fetch motors for CMF: ' . $cmf, 'error' => $data ], $run_id );
+        error_log( "handle_ls_auto_sync_cron: Failed to fetch data for CMF: $cmf - $data" );
+        $cmf_index++;
+        $cursor = 0;
+        update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => 0 ] );
+        if ( $cmf_index >= count( $auto_sync_list2 ) ) {
+            delete_option( $state_key );
+            if ( function_exists( 'nitropack_sdk_purge' ) ) {
+                nitropack_sdk_purge( null, null, null );
             }
-        } else {
-            
-            ls_motors_log([
-                'message' => "Failed"
-            ], $run_id);
-            error_log( "Failed to fetch data for CMF: $cmf" );
         }
+        return;
     }
 
-     if(function_exists("nitropack_sdk_purge")) {
-          ls_motors_log([
-        'message' => "Nitropack clear cache."
-    ], $run_id);
-        nitropack_sdk_purge( NULL, NULL, NULL);
+    $units     = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
+    $start_time = time();
+    $processed  = 0;
+
+    foreach ( $units as $part ) {
+        if ( ( time() - $start_time ) >= $max_sec ) {
+            break;
+        }
+        sync_part_to_motors( $part, $run_id );
+        $processed++;
     }
 
-    ls_motors_log([
-        'message' => "Cron job execution completed."
-    ], $run_id);
-    error_log( "Failed to fetch data for CMF: $cmf" );
-   
+    $cursor += $processed;
+    if ( function_exists( 'ls_sync_progress_log' ) ) {
+        ls_sync_progress_log( $run_id, 'motors', $cmf, $cursor, $processed, 'sync', $cursor );
+    }
+
+    if ( $processed < $chunk_size ) {
+        $cursor    = 0;
+        $cmf_index++;
+    }
+
+    if ( $cmf_index >= count( $auto_sync_list2 ) ) {
+        delete_option( $state_key );
+        ls_motors_log( [ 'message' => 'Cron job execution completed (all CMFs synced).' ], $run_id );
+        if ( function_exists( 'nitropack_sdk_purge' ) ) {
+            nitropack_sdk_purge( null, null, null );
+        }
+    } else {
+        update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => $cursor ] );
+        ls_motors_log( [ 'message' => 'Cron chunk done; more pages remain. CMF index: ' . $cmf_index . ', cursor: ' . $cursor ], $run_id );
+    }
 }
 
 

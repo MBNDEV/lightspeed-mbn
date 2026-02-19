@@ -4,26 +4,152 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+/**
+ * Sync for WooCommerce: chunked by request (LS_SYNC_CHUNK_SIZE), time-capped (LS_SYNC_MAX_SEC_PER_REQUEST),
+ * state in ls_sync_woo_state. Same pattern as Motor Listings sync. Process functions (process_sync_woocommerce, etc.)
+ * remain for backward compatibility and accept full arrays.
+ */
 function ls_render_sync_woocommerce_page() {
     if ( ! current_user_can( 'manage_options' ) ) {
         return;
     }
 
-    // Fetch dealer data from the API.
     $dealer_data = ls_api_request_dealer();
+    $chunk_size = LS_SYNC_CHUNK_SIZE;
+    $max_sec    = LS_SYNC_MAX_SEC_PER_REQUEST;
+    $state_key  = 'ls_sync_woo_state';
 
-    // Use a single run_id for API logging when user clicks Sync, Review, or Sync New.
-    $run_id = ( isset( $_POST['sync_cmf'] ) || isset( $_POST['sync_review'] ) || isset( $_POST['sync_new'] ) )
-        ? date( 'Y-m-d_H-i-s' )
-        : null;
+    $woo_synced_data   = null;
+    $woo_result_cmf    = null;
+    $woo_result_action = null;
+    $woo_show_next     = false;
+    $woo_run_id        = null;
+    $woo_total         = 0;
+    $woo_error         = null;
 
-    $part_data = isset( $_POST['sync_cmf'] ) ? ls_sync_parts_inventory( sanitize_text_field( $_POST['sync_cmf'] ), $run_id ) : null;
-    $review = isset( $_POST['sync_review'] ) ? ls_sync_parts_inventory( sanitize_text_field( $_POST['sync_review'] ), $run_id ) : null;
-    $newData = isset( $_POST['sync_new'] ) ? ls_sync_parts_inventory( sanitize_text_field( $_POST['sync_new'] ), $run_id ) : null;
+    if ( isset( $_POST['sync_new'] ) ) {
+        delete_option( $state_key );
+    }
+
+    $is_next = ! empty( $_POST['sync_next_page'] );
+    $cmf = null;
+    $action = null;
+    if ( isset( $_POST['sync_cmf'] ) ) {
+        $cmf = sanitize_text_field( $_POST['sync_cmf'] );
+        $action = 'sync';
+    } elseif ( isset( $_POST['sync_review'] ) ) {
+        $cmf = sanitize_text_field( $_POST['sync_review'] );
+        $action = 'review';
+    } elseif ( isset( $_POST['sync_new'] ) ) {
+        $cmf = sanitize_text_field( $_POST['sync_new'] );
+        $action = 'sync_new';
+    }
+
+    if ( $cmf !== null ) {
+        @set_time_limit( (int) ( LS_SYNC_MAX_SEC_PER_REQUEST + 15 ) );
+        $run_id = $is_next ? null : date( 'Y-m-d_H-i-s' );
+        $cursor = 0;
+        $total_processed = 0;
+        if ( $is_next ) {
+            $state = get_option( $state_key, [] );
+            if ( ! empty( $state ) && isset( $state['cmf'], $state['action'], $state['cursor'], $state['run_id'] ) && $state['cmf'] === $cmf && $state['action'] === $action ) {
+                $run_id = $state['run_id'];
+                $cursor = (int) $state['cursor'];
+                $total_processed = (int) ( $state['total_processed'] ?? 0 );
+            } else {
+                $run_id = date( 'Y-m-d_H-i-s' );
+            }
+        }
+
+        $data = ls_sync_parts_inventory_page( $cmf, $cursor, $chunk_size, $run_id );
+
+        if ( is_string( $data ) ) {
+            $woo_error = $data;
+            delete_option( $state_key );
+        } else {
+            $parts = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
+            $start_time = time();
+            $row_html = '';
+            $count = 0;
+            $item_num = 0;
+            $processed_this_chunk = 0;
+
+            foreach ( $parts as $part ) {
+                if ( ( time() - $start_time ) >= $max_sec ) {
+                    break;
+                }
+                if ( $action === 'sync' ) {
+                    $product_id = sync_part_to_woocommerce( $part, $run_id );
+                } elseif ( $action === 'sync_new' ) {
+                    $product_id = sync_new_part_to_woocommerce( $part, $run_id );
+                } else {
+                    $product_id = wc_get_product_id_by_sku( $part['PartNumber'] ?? '' );
+                }
+                if ( $product_id > 0 ) {
+                    $count++;
+                }
+                $item_num++;
+                $processed_this_chunk++;
+                $row_html .= '<tr><td>' . $item_num . '</td><td>' . ( $product_id ?: 0 ) . '</td>';
+                $row_html .= '<td>' . esc_html( $part['PartNumber'] ?? 'N/A' ) . '</td><td>' . esc_html( $part['Description'] ?? 'N/A' ) . '</td>';
+                $row_html .= '<td>' . esc_html( $part['category'] ?? 'N/A' ) . '</td><td>' . esc_html( $part['Avail'] ?? 'N/A' ) . '</td>';
+                $row_html .= '<td>' . esc_html( $part['activepricetype'] ?? 'N/A' ) . '</td><td>' . esc_html( $part['Retail'] ?? 'N/A' ) . '</td>';
+                $row_html .= '<td>' . esc_html( $part['CurrentActivePrice'] ?? 'N/A' ) . '</td></tr>';
+            }
+
+            $total_processed += $processed_this_chunk;
+            if ( function_exists( 'ls_sync_progress_log' ) ) {
+                ls_sync_progress_log( $run_id, 'woo', $cmf, $cursor + $processed_this_chunk, $processed_this_chunk, $action, $total_processed );
+            }
+
+            $woo_synced_data = [ 'count' => $count . ' / ' . $processed_this_chunk, 'rows' => $row_html ];
+            $woo_result_cmf = $cmf;
+            $woo_result_action = $action;
+            $woo_run_id = $run_id;
+            $woo_total = $total_processed;
+
+            $woo_show_next = ( count( $parts ) >= $chunk_size ) || ( $processed_this_chunk < count( $parts ) );
+            if ( $woo_show_next && $processed_this_chunk > 0 ) {
+                update_option( $state_key, [ 'cmf' => $cmf, 'action' => $action, 'run_id' => $run_id, 'cursor' => $cursor + $processed_this_chunk, 'total_processed' => $total_processed ] );
+            } else {
+                delete_option( $state_key );
+                if ( $total_processed > 0 ) {
+                    set_transient( 'ls_sync_woo_complete', [
+                        'cmf'    => $woo_result_cmf,
+                        'action' => $woo_result_action,
+                        'total'  => $woo_total,
+                    ], 300 );
+                    if ( function_exists( 'nitropack_sdk_purge' ) ) {
+                        nitropack_sdk_purge( null, null, null );
+                    }
+                }
+            }
+        }
+    }
+
+    $woo_complete    = get_transient( 'ls_sync_woo_complete' );
+    $motors_complete = get_transient( 'ls_sync_motors_complete' );
+    if ( $woo_complete !== false ) {
+        delete_transient( 'ls_sync_woo_complete' );
+    }
+    if ( $motors_complete !== false ) {
+        delete_transient( 'ls_sync_motors_complete' );
+    }
 
     ?>
     <div class="wrap">
         <h1>Sync for WooCommerce</h1>
+
+        <?php if ( $woo_complete !== false && is_array( $woo_complete ) ): ?>
+            <div class="notice notice-success is-dismissible">
+                <p><strong>WooCommerce sync complete.</strong> CMF <?php echo esc_html( $woo_complete['cmf'] ?? '' ); ?>: <?php echo esc_html( $woo_complete['action'] ?? 'sync' ); ?> finished — <?php echo (int) ( $woo_complete['total'] ?? 0 ); ?> items synced.</p>
+            </div>
+        <?php endif; ?>
+        <?php if ( $motors_complete !== false && is_array( $motors_complete ) ): ?>
+            <div class="notice notice-success is-dismissible">
+                <p><strong>Motor Listings sync complete.</strong> CMF <?php echo esc_html( $motors_complete['cmf'] ?? '' ); ?>: <?php echo esc_html( $motors_complete['action'] ?? 'sync' ); ?> finished — <?php echo (int) ( $motors_complete['total'] ?? 0 ); ?> items synced.</p>
+            </div>
+        <?php endif; ?>
 
         <?php if ( is_string( $dealer_data ) ): ?>
             <div class="notice notice-error">
@@ -36,19 +162,13 @@ function ls_render_sync_woocommerce_page() {
                         <th>Cmf</th>
                         <th>Dealership Name</th>
                         <th>Dealer Number</th>
-                        <!-- <th>Direct Connect</th>
-                        <th>Direct Connect Date</th>
-                        <th>Program Consent Date</th>
-                        <th>Go Live Date</th> -->
                         <th>Actions</th>
                         <th>Auto Sync</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php
-                    // Retrieve the list of CMFs with auto sync enabled.
                     $auto_sync_list = get_option( 'ls_auto_sync', [] );
-
                     if ( ! empty( $dealer_data ) ):
                         foreach ( $dealer_data as $dealer ):
                             $cmf = $dealer['Cmf'];
@@ -58,154 +178,48 @@ function ls_render_sync_woocommerce_page() {
                                 <td><?php echo esc_html( $dealer['Cmf'] ?? 'N/A' ); ?></td>
                                 <td><?php echo esc_html( $dealer['DealershipName'] ?? 'N/A' ); ?></td>
                                 <td><?php echo esc_html( $dealer['DealerNumber'] ?? 'N/A' ); ?></td>
-                                <!-- <td><?php echo esc_html( $dealer['DirectConnect'] ?? 'N/A' ); ?></td>
-                                <td><?php echo esc_html( $dealer['DirectConnectDate'] ?? 'N/A' ); ?></td>
-                                <td><?php echo esc_html( $dealer['ProgramConsentDate'] ?? 'N/A' ); ?></td>
-                                <td><?php echo esc_html( $dealer['GoLiveDate'] ?? 'N/A' ); ?></td> -->
                                 <td style="display: flex; gap: 10px;">
-                                    <form method="post" action="">
-                                        <input type="hidden" name="sync_cmf" value="<?php echo esc_attr( $cmf ); ?>">
-                                        <button type="submit" name="sync_button" class="button">Sync</button>
-                                    </form>
-                                    <form method="post" action="">
-                                        <input type="hidden" name="sync_review" value="<?php echo esc_attr( $cmf ); ?>">
-                                        <button type="submit" name="review_button" class="button">Review</button>
-                                    </form>
-                                    
-                                    <form method="post" action="">
-                                        <input type="hidden" name="sync_new" value="<?php echo esc_attr( $cmf ); ?>">
-                                        <button type="submit" name="new_button" class="button">Sync New</button>
-                                    </form>
+                                    <form method="post" action=""><input type="hidden" name="sync_cmf" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="sync_button" class="button">Sync</button></form>
+                                    <form method="post" action=""><input type="hidden" name="sync_review" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="review_button" class="button">Review</button></form>
+                                    <form method="post" action=""><input type="hidden" name="sync_new" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="new_button" class="button">Sync New</button></form>
                                 </td>
                                 <td>
                                     <form method="post" action="">
                                         <input type="hidden" name="auto_sync_cmf" value="<?php echo esc_attr( $cmf ); ?>">
-                                        <label>
-                                            <input type="checkbox" name="enable_auto_sync" value="1" <?php checked( $auto_sync_enabled, true ); ?>>
-                                            Enable
-                                        </label>
+                                        <label><input type="checkbox" name="enable_auto_sync" value="1" <?php checked( $auto_sync_enabled, true ); ?>> Enable</label>
                                         <button type="submit" class="button">Save</button>
                                     </form>
                                 </td>
                             </tr>
-                    <?php
-                        endforeach;
-                    else:
-                    ?>
-                        <tr>
-                            <td colspan="9">No data available.</td>
-                        </tr>
+                    <?php endforeach; else: ?>
+                        <tr><td colspan="9">No data available.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         <?php endif; ?>
 
-
-        <?php 
-            if ( $part_data && is_array( $part_data ) ): 
-            $run_id = date( 'Y-m-d_H-i-s' );
-            $synced_data = process_sync_woocommerce($part_data, $run_id);
-        ?>
-            <h2>CMF: <?php echo esc_html( sanitize_text_field( $_POST['sync_cmf'] ) ); ?></h2>
-            <h3>Synced: <?php echo $synced_data['count']; ?></h3>
+        <?php if ( $woo_error ): ?>
+            <div class="notice notice-error"><p><?php echo esc_html( $woo_error ); ?></p></div>
+        <?php elseif ( $woo_synced_data !== null && $woo_result_cmf !== null ): ?>
+            <h2>CMF: <?php echo esc_html( $woo_result_cmf ); ?></h2>
+            <h3><?php echo esc_html( $woo_result_action === 'sync_new' ? 'Sync New' : ( $woo_result_action === 'review' ? 'Review' : 'Sync' ) ); ?>: <?php echo esc_html( $woo_synced_data['count'] ); ?>
+                <?php if ( $woo_show_next ): ?> (<?php echo (int) $woo_total; ?> so far — click Next to continue)<?php else: ?> (complete, <?php echo (int) $woo_total; ?> total)<?php endif; ?>
+            </h3>
             <table class="widefat fixed" cellspacing="0">
                 <thead>
                     <tr>
-                        <td>#</td>
-                        <td>WooCommerce ID</td>
-                        <th>Part Number / SKU</th>
-                        <th>Description / Prod Name</th>
-                        <th>Category</th>
-                        <!-- <th>On Hand</th> -->
-                        <th>Avail</th>
-                        <!-- <th>Cost</th> -->
-                        <th>ActivePriceType</th>
-                        <th>Retail</th>
-                        <th>Current Active Price</th>
-                        <!-- <th>Last Sold Date</th>
-                        <th>Last Received Date</th> -->
+                        <td>#</td><td>WooCommerce ID</td><th>Part Number / SKU</th><th>Description / Prod Name</th><th>Category</th><th>Avail</th><th>ActivePriceType</th><th>Retail</th><th>Current Active Price</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <?php 
-                     echo $synced_data['rows'];
-                    ?>
-                </tbody>
+                <tbody><?php echo $woo_synced_data['rows']; ?></tbody>
             </table>
-        <?php elseif ( isset( $_POST['sync_cmf'] ) ): ?>
-            <div class="notice notice-error">
-                <p>Failed to fetch parts data for CMF: <?php echo esc_html( sanitize_text_field( $_POST['sync_cmf'] ) ); ?></p>
-            </div>
-        <?php endif; ?>
-
-        <?php if ( $newData && is_array( $newData ) ):
-            $run_id = date( 'Y-m-d_H-i-s' );
-            $synced_data = process_sync_new_woocommerce($newData, $run_id);
-        ?>
-            <h2>CMF: <?php echo esc_html( sanitize_text_field( $_POST['sync_new'] ) ); ?></h2>
-            <h3>Synced: <?php echo $synced_data['count']; ?></h3>
-            <table class="widefat fixed" cellspacing="0">
-                <thead>
-                    <tr>
-                        <td>#</td>
-                        <td>WooCommerce ID</td>
-                        <th>Part Number / SKU</th>
-                        <th>Description / Prod Name</th>
-                        <th>Category</th>
-                        <!-- <th>On Hand</th> -->
-                        <th>Avail</th>
-                        <!-- <th>Cost</th> -->
-                        <th>ActivePriceType</th>
-                        <th>Retail</th>
-                        <th>Current Active Price</th>
-                        <!-- <th>Last Sold Date</th> -->
-                        <!-- <th>Last Received Date</th> -->
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php 
-                     echo $synced_data['rows'];
-                    ?>
-                </tbody>
-            </table>
-        <?php elseif ( isset( $_POST['sync_new'] ) ): ?>
-            <div class="notice notice-error">
-                <p>Failed to fetch parts data for CMF: <?php echo esc_html( sanitize_text_field( $_POST['sync_new'] ) ); ?></p>
-            </div>
-        <?php endif; ?>
-
-
-        <?php 
-            if ( $review && is_array( $review ) ): 
-            $reviewData = sync_review_woocommerce($review);
-        ?>
-            <h2>CMF: <?php echo esc_html( sanitize_text_field( $_POST['sync_review'] ) ); ?></h2>
-            <h3>Synced <?php echo $reviewData['count']; ?></h3>
-            <table class="widefat fixed" cellspacing="0">
-                <thead>
-                    <tr>
-                        <td>#</td>
-                        <td>WooCommerce ID</td>
-                        <th>Part Number / SKU</th>
-                        <th>Description / Name</th>
-                        <th>Category</th>
-                        <th>On Hand</th>
-                        <th>Avail</th>
-                        <th>ActivePriceType</th>
-                        <th>Retail</th>
-                        <th>Current Active Price</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php 
-                    echo $reviewData['rows'];
-                    ?>
-                </tbody>
-            </table>
-        <?php elseif ( isset( $_POST['sync_review'] ) ): ?>
-            <div class="notice notice-error">
-                <p>Failed to fetch parts data for CMF: <?php echo esc_html( sanitize_text_field( $_POST['sync_cmf'] ) ); ?></p>
-            </div>
+            <?php if ( $woo_show_next ): ?>
+                <p><form method="post" action="" style="display:inline;">
+                    <input type="hidden" name="<?php echo $woo_result_action === 'sync' ? 'sync_cmf' : ( $woo_result_action === 'review' ? 'sync_review' : 'sync_new' ); ?>" value="<?php echo esc_attr( $woo_result_cmf ); ?>">
+                    <input type="hidden" name="sync_next_page" value="1">
+                    <button type="submit" class="button button-primary">Next page</button>
+                </form></p>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
     <?php

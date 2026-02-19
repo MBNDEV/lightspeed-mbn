@@ -14,6 +14,12 @@ const LS_3PA_RATE_LIMIT_WINDOW_SEC = 60;
 const LS_3PA_RATE_LIMIT_OPTION     = 'ls_3pa_request_timestamps';
 const LS_3PA_RATE_LIMIT_MESSAGE    = 'Rate limit: too many requests per minute. Try again later.';
 
+/** Sync: small chunk per request to avoid gateway timeout (docs: max 500 per page). */
+const LS_SYNC_CHUNK_SIZE           = 15;
+const LS_SYNC_PAGE_SIZE_MAX        = 500;
+/** Max seconds per HTTP request before bailing and showing "Next page". */
+const LS_SYNC_MAX_SEC_PER_REQUEST  = 20;
+
 /**
  * Record that a 3PA request was made (for sliding-window rate limit).
  */
@@ -102,94 +108,113 @@ function ls_api_request_dealer() {
 }
 
 /**
- * Sync parts inventory for a CMF from the API.
+ * Fetch one page of parts (TOP/SKIP/ORDERBY per docs).
  *
- * @param string     $cmf    CMF identifier.
- * @param string|null $run_id Optional. Run ID for API logging (e.g. when triggered by Sync/Review/Sync New buttons).
+ * @param string     $cmf      CMF identifier.
+ * @param int        $skip     Number of records to skip.
+ * @param int        $top      Number to fetch (capped at LS_SYNC_PAGE_SIZE_MAX).
+ * @param string|null $run_id  Run ID for API logging.
  * @return array|string Decoded data array or error string.
  */
-function ls_sync_parts_inventory( $cmf, $run_id = null ) {
-    // Retrieve API credentials from wp_options.
-    $api_url = get_option( 'ls_api_url', '' );
+function ls_sync_parts_inventory_page( $cmf, $skip, $top, $run_id = null ) {
+    $top = (int) $top;
+    if ( $top <= 0 || $top > LS_SYNC_PAGE_SIZE_MAX ) {
+        $top = LS_SYNC_CHUNK_SIZE;
+    }
+    $skip = max( 0, (int) $skip );
+    $api_url  = get_option( 'ls_api_url', '' );
     $username = get_option( 'ls_username', '' );
     $password = get_option( 'ls_password', '' );
-
-    // Prepare the API endpoint (used for request and for logging).
-    $endpoint = rtrim( $api_url ) . "/Part/".$cmf."?\$top=5";
-
-    // Check if credentials are available.
+    $endpoint = rtrim( $api_url ) . '/Part/' . $cmf . '?$top=' . $top . '&$skip=' . $skip . '&$orderby=PartNumber';
     if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
         if ( $run_id !== null && $run_id !== '' ) {
-            ls_motors_log( [
-                'StockNumber'   => $cmf,
-                'endpoint'      => $endpoint,
-                'response_body' => '',
-                'headers'       => [],
-                'status_code'   => 0,
-            ], $run_id );
+            ls_motors_log( [ 'StockNumber' => $cmf, 'endpoint' => $endpoint, 'response_body' => '', 'headers' => [], 'status_code' => 0 ], $run_id );
         }
-        return 'Missing API credentials. Please set ls_api_url, ls_username, and ls_password in the settings.';
+        return 'Missing API credentials.';
     }
-
-    // Prepare the headers for authentication.
-    $headers = [
-        'Authorization' => 'Basic ' . base64_encode( $username . ':' . $password ),
-        'Content-Type'  => 'application/json',
-    ];
-
+    $headers = [ 'Authorization' => 'Basic ' . base64_encode( $username . ':' . $password ), 'Content-Type' => 'application/json' ];
     if ( ! ls_3pa_validate_before_request() ) {
         if ( $run_id !== null && $run_id !== '' ) {
-            ls_motors_log( [
-                'StockNumber'   => $cmf,
-                'endpoint'      => $endpoint,
-                'response_body' => '',
-                'headers'       => [],
-                'status_code'   => 429,
-            ], $run_id );
+            ls_motors_log( [ 'StockNumber' => $cmf, 'endpoint' => $endpoint, 'response_body' => '', 'headers' => [], 'status_code' => 429 ], $run_id );
         }
         return LS_3PA_RATE_LIMIT_MESSAGE;
     }
-    $response = wp_remote_get( $endpoint, [
-        'headers' => $headers,
-        'timeout' => 15,
-    ] );
-
+    $response = wp_remote_get( $endpoint, [ 'headers' => $headers, 'timeout' => 30 ] );
     $status_code = is_wp_error( $response ) ? 500 : wp_remote_retrieve_response_code( $response );
     $response_body = is_wp_error( $response ) ? '' : wp_remote_retrieve_body( $response );
     $response_headers = is_wp_error( $response ) ? [] : wp_remote_retrieve_headers( $response );
-
-    // Log API call when run_id is provided (e.g. from Sync / Review / Sync New buttons).
     if ( $run_id !== null && $run_id !== '' ) {
-        ls_motors_log( [
-            'StockNumber'    => $cmf,
-            'endpoint'       => $endpoint,
-            'response_body'  => $response_body,
-            'headers'        => $response_headers,
-            'status_code'    => $status_code,
-        ], $run_id );
+        ls_motors_log( [ 'StockNumber' => $cmf, 'endpoint' => $endpoint, 'response_body' => $response_body, 'headers' => $response_headers, 'status_code' => $status_code ], $run_id );
     }
-
-    // Check for errors.
     if ( is_wp_error( $response ) ) {
         return 'Error: ' . $response->get_error_message();
     }
-
-    // Retrieve the response body and decode it.
     $data = json_decode( $response_body, true );
-
-    // Check for JSON decoding errors.
     if ( json_last_error() !== JSON_ERROR_NONE ) {
         return 'Error decoding JSON response: ' . json_last_error_msg();
     }
-
     return $data;
 }
 
 /**
- * Fetch Unit list for a CMF from the API.
+ * Fetch one page of units (TOP/SKIP/ORDERBY per docs).
+ */
+function ls_sync_major_unit_page( $cmf, $skip, $top, $run_id = null ) {
+    $top = (int) $top;
+    if ( $top <= 0 || $top > LS_SYNC_PAGE_SIZE_MAX ) {
+        $top = LS_SYNC_CHUNK_SIZE;
+    }
+    $skip = max( 0, (int) $skip );
+    $api_url  = get_option( 'ls_api_url', '' );
+    $username = get_option( 'ls_username', '' );
+    $password = get_option( 'ls_password', '' );
+    $endpoint = rtrim( $api_url ) . '/Unit/' . $cmf . '?$top=' . $top . '&$skip=' . $skip . '&$orderby=StockNumber';
+    if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
+        if ( $run_id !== null && $run_id !== '' ) {
+            ls_motors_log( [ 'StockNumber' => $cmf, 'endpoint' => $endpoint, 'response_body' => '', 'headers' => [], 'status_code' => 0 ], $run_id );
+        }
+        return 'Missing API credentials.';
+    }
+    $headers = [ 'Authorization' => 'Basic ' . base64_encode( $username . ':' . $password ), 'Content-Type' => 'application/json' ];
+    if ( ! ls_3pa_validate_before_request() ) {
+        if ( $run_id !== null && $run_id !== '' ) {
+            ls_motors_log( [ 'StockNumber' => $cmf, 'endpoint' => $endpoint, 'response_body' => '', 'headers' => [], 'status_code' => 429 ], $run_id );
+        }
+        return LS_3PA_RATE_LIMIT_MESSAGE;
+    }
+    $response = wp_remote_get( $endpoint, [ 'headers' => $headers, 'timeout' => 30 ] );
+    $status_code = is_wp_error( $response ) ? 500 : wp_remote_retrieve_response_code( $response );
+    $response_body = is_wp_error( $response ) ? '' : wp_remote_retrieve_body( $response );
+    $response_headers = is_wp_error( $response ) ? [] : wp_remote_retrieve_headers( $response );
+    if ( $run_id !== null && $run_id !== '' ) {
+        ls_motors_log( [ 'StockNumber' => $cmf, 'endpoint' => $endpoint, 'response_body' => $response_body, 'headers' => $response_headers, 'status_code' => $status_code ], $run_id );
+    }
+    if ( is_wp_error( $response ) ) {
+        return 'Error: ' . $response->get_error_message();
+    }
+    $data = json_decode( $response_body, true );
+    if ( json_last_error() !== JSON_ERROR_NONE ) {
+        return 'Error decoding JSON response: ' . json_last_error_msg();
+    }
+    return $data;
+}
+
+/**
+ * Parts inventory: first chunk only (backward compat). Admin paged sync uses ls_sync_parts_inventory_page directly.
  *
  * @param string     $cmf    CMF identifier.
- * @param string|null $run_id Optional. Run ID for API logging (e.g. when triggered by Sync/Sync New buttons).
+ * @param string|null $run_id Optional. Run ID for API logging.
+ * @return array|string Decoded data array or error string.
+ */
+function ls_sync_parts_inventory( $cmf, $run_id = null ) {
+    return ls_sync_parts_inventory_page( $cmf, 0, LS_SYNC_CHUNK_SIZE, $run_id );
+}
+
+/**
+ * Unit list: full fetch with no $top/$skip (used by settings.php cron). Admin paged sync uses ls_sync_major_unit_page.
+ *
+ * @param string     $cmf    CMF identifier.
+ * @param string|null $run_id Optional. Run ID for API logging.
  * @return array|string Decoded data array or error string.
  */
 function ls_sync_major_unit( $cmf, $run_id = null ) {
