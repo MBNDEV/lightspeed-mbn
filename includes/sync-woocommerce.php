@@ -19,6 +19,11 @@ function ls_render_sync_woocommerce_page() {
     $max_sec    = LS_SYNC_MAX_SEC_PER_REQUEST;
     $state_key  = 'ls_sync_woo_state';
 
+    $woo_sync_disabled = empty( get_option( 'ls_auto_sync', [] ) );
+    if ( $woo_sync_disabled ) {
+        delete_option( $state_key );
+    }
+
     $woo_synced_data   = null;
     $woo_result_cmf    = null;
     $woo_result_action = null;
@@ -26,6 +31,7 @@ function ls_render_sync_woocommerce_page() {
     $woo_run_id        = null;
     $woo_total         = 0;
     $woo_error         = null;
+    $woo_sync_disabled_notice = false;
 
     if ( isset( $_POST['sync_new'] ) ) {
         delete_option( $state_key );
@@ -43,6 +49,12 @@ function ls_render_sync_woocommerce_page() {
     } elseif ( isset( $_POST['sync_new'] ) ) {
         $cmf = sanitize_text_field( $_POST['sync_new'] );
         $action = 'sync_new';
+    }
+
+    if ( $woo_sync_disabled && ( $cmf !== null || $is_next ) ) {
+        $cmf = null;
+        $woo_sync_disabled_notice = true;
+        delete_option( $state_key );
     }
 
     if ( $cmf !== null ) {
@@ -151,6 +163,17 @@ function ls_render_sync_woocommerce_page() {
             </div>
         <?php endif; ?>
 
+        <?php if ( $woo_sync_disabled ): ?>
+            <div class="notice notice-warning">
+                <p>Sync has been disabled. Enable Auto Sync for at least one CMF below to run sync.</p>
+            </div>
+        <?php endif; ?>
+        <?php if ( $woo_sync_disabled_notice ): ?>
+            <div class="notice notice-warning">
+                <p>Sync has been disabled.</p>
+            </div>
+        <?php endif; ?>
+
         <?php if ( is_string( $dealer_data ) ): ?>
             <div class="notice notice-error">
                 <p><?php echo esc_html( $dealer_data ); ?></p>
@@ -179,9 +202,17 @@ function ls_render_sync_woocommerce_page() {
                                 <td><?php echo esc_html( $dealer['DealershipName'] ?? 'N/A' ); ?></td>
                                 <td><?php echo esc_html( $dealer['DealerNumber'] ?? 'N/A' ); ?></td>
                                 <td style="display: flex; gap: 10px;">
-                                    <form method="post" action=""><input type="hidden" name="sync_cmf" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="sync_button" class="button">Sync</button></form>
-                                    <form method="post" action=""><input type="hidden" name="sync_review" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="review_button" class="button">Review</button></form>
-                                    <form method="post" action=""><input type="hidden" name="sync_new" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="new_button" class="button">Sync New</button></form>
+                                    <?php if ( $woo_sync_disabled ): ?>
+                                        <span class="ls-sync-disabled-buttons" onclick="alert('Sync has been disabled');" style="cursor: not-allowed; display: inline-flex; gap: 10px;">
+                                            <button type="button" class="button" disabled>Sync</button>
+                                            <button type="button" class="button" disabled>Review</button>
+                                            <button type="button" class="button" disabled>Sync New</button>
+                                        </span>
+                                    <?php else: ?>
+                                        <form method="post" action=""><input type="hidden" name="sync_cmf" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="sync_button" class="button">Sync</button></form>
+                                        <form method="post" action=""><input type="hidden" name="sync_review" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="review_button" class="button">Review</button></form>
+                                        <form method="post" action=""><input type="hidden" name="sync_new" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="new_button" class="button">Sync New</button></form>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <form method="post" action="">
@@ -548,6 +579,9 @@ if ( isset( $_POST['auto_sync_cmf'] ) ) {
 
     // Save the updated list back to the database.
     update_option( 'ls_auto_sync', $auto_sync_list );
+    if ( function_exists( 'ls_maybe_schedule_auto_sync_cron' ) ) {
+        ls_maybe_schedule_auto_sync_cron();
+    }
 
     add_action( 'admin_notices', function() use ( $cmf, $enable_auto_sync ) {
         echo '<div class="notice notice-success"><p>Auto Sync ' . ( $enable_auto_sync ? 'enabled' : 'disabled' ) . ' for CMF: ' . esc_html( $cmf ) . '</p></div>';

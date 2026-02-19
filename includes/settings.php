@@ -40,56 +40,11 @@ function ls_render_settings_page() {
         update_option( 'ls_password', sanitize_text_field( $_POST['ls_password'] ) );
         update_option( 'ls_api_docs_url', esc_url_raw( $_POST['ls_api_docs_url'] ) );
 
-        // Update cron enable/disable option.
-        $cron_enabled = isset( $_POST['ls_cron_enabled'] ) ? 1 : 0;
-        update_option( 'ls_cron_enabled', $cron_enabled );
-
         // API log retention (days). Logs older than this are deleted automatically.
         $retention_days = isset( $_POST['ls_log_retention_days'] ) ? max( 1, (int) $_POST['ls_log_retention_days'] ) : 30;
         update_option( 'ls_log_retention_days', $retention_days );
 
-        // Handle cron scheduling based on the checkbox value.
-        if ( $cron_enabled ) {
-            if ( ! wp_next_scheduled( 'ls_auto_sync_cron' ) ) {
-                wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_cron' );
-            }
-            // if ( ! wp_next_scheduled( 'ls_update_motors_status_cron' ) ) {
-            //     wp_schedule_event( time(), 'every_1_hour', 'ls_update_motors_status_cron' );
-            // }
-            if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron' ) ) {
-                wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron' );
-            }
-
-            if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' ) ) {
-                wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_images_cron_2nd_batch' );
-            }
-
-            if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' ) ) {
-                wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron_check_no_image' );
-            }
-            
-        } else {
-            $timestamp = wp_next_scheduled( 'ls_auto_sync_cron' );
-            if ( $timestamp ) {
-                wp_unschedule_event( $timestamp, 'ls_auto_sync_cron' );
-            }
-            // $timestamp2 = wp_next_scheduled( 'ls_update_motors_status_cron' );
-            // if ( $timestamp2 ) {
-            //     wp_unschedule_event( $timestamp2, 'ls_update_motors_status_cron' );
-            // }
-            $timestamp3 = wp_next_scheduled( 'ls_auto_sync_images_cron' );
-            if ( $timestamp3 ) {
-                wp_unschedule_event( $timestamp3, 'ls_auto_sync_images_cron' );
-            }
-            $timestamp4 = wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' );
-            if ( $timestamp4 ) {
-                wp_unschedule_event( $timestamp4, 'ls_auto_sync_images_cron_2nd_batch' );
-            }
-            $timestamp5 = wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' );
-            if ( $timestamp5) {
-                wp_unschedule_event( $timestamp5, 'ls_auto_sync_images_cron_check_no_image' );
-            }
-        }
+        ls_maybe_schedule_auto_sync_cron();
 
         // Schedule daily API log cleanup if not already scheduled.
         if ( ! wp_next_scheduled( 'ls_cleanup_api_logs' ) ) {
@@ -104,7 +59,6 @@ function ls_render_settings_page() {
     $username = get_option( 'ls_username', '' );
     $password = get_option( 'ls_password', '' );
     $api_docs_url = get_option( 'ls_api_docs_url', '' );
-    $cron_enabled = get_option( 'ls_cron_enabled', 0 ); // Default is disabled.
     $log_retention_days = (int) get_option( 'ls_log_retention_days', 30 );
     if ( $log_retention_days < 1 ) {
         $log_retention_days = 30;
@@ -152,15 +106,6 @@ function ls_render_settings_page() {
                 </tr>
                 <tr>
                     <th scope="row">
-                        <label for="ls_cron_enabled">Enable Auto Sync Cron</label>
-                    </th>
-                    <td>
-                        <input type="checkbox" name="ls_cron_enabled" id="ls_cron_enabled" value="1" <?php checked( $cron_enabled, 1 ); ?>>
-                        <label for="ls_cron_enabled">Enable auto-sync every 1 day</label>
-                    </td>
-                </tr>
-                <tr>
-                    <th scope="row">
                         <label for="ls_log_retention_days">API log retention (days)</label>
                     </th>
                     <td>
@@ -190,6 +135,45 @@ function ls_render_settings_page() {
     <?php
 }
 
+/**
+ * Schedule or unschedule ls_auto_sync_cron and image crons based on ls_auto_sync / ls_auto_sync_motors.
+ * Call after updating either list (e.g. from Sync for WooCommerce or Sync for Motor Listings).
+ */
+function ls_maybe_schedule_auto_sync_cron() {
+    $cron_any_enabled = ! empty( get_option( 'ls_auto_sync', [] ) ) || ! empty( get_option( 'ls_auto_sync_motors', [] ) );
+    if ( $cron_any_enabled ) {
+        if ( ! wp_next_scheduled( 'ls_auto_sync_cron' ) ) {
+            wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_cron' );
+        }
+        if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron' ) ) {
+            wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron' );
+        }
+        if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' ) ) {
+            wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_images_cron_2nd_batch' );
+        }
+        if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' ) ) {
+            wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron_check_no_image' );
+        }
+    } else {
+        $timestamp = wp_next_scheduled( 'ls_auto_sync_cron' );
+        if ( $timestamp ) {
+            wp_unschedule_event( $timestamp, 'ls_auto_sync_cron' );
+        }
+        $t3 = wp_next_scheduled( 'ls_auto_sync_images_cron' );
+        if ( $t3 ) {
+            wp_unschedule_event( $t3, 'ls_auto_sync_images_cron' );
+        }
+        $t4 = wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' );
+        if ( $t4 ) {
+            wp_unschedule_event( $t4, 'ls_auto_sync_images_cron_2nd_batch' );
+        }
+        $t5 = wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' );
+        if ( $t5 ) {
+            wp_unschedule_event( $t5, 'ls_auto_sync_images_cron_check_no_image' );
+        }
+    }
+}
+
 add_action( 'ls_auto_sync_cron', 'handle_ls_auto_sync_cron' );
 
 /**
@@ -197,108 +181,122 @@ add_action( 'ls_auto_sync_cron', 'handle_ls_auto_sync_cron' );
  * State in ls_cron_motors_state; each run processes one chunk then exits; next run continues.
  */
 function handle_ls_auto_sync_cron() {
-    error_log( 'handle_ls_auto_sync_cron triggered at ' . date( 'Y-m-d H:i:s' ) );
     $run_id = date( 'Y-m-d_H-i-s' );
-     ls_motors_log([
-        'message' => "Cron job triggered"
-    ], $run_id);
-
-    // Get the list of CMFs with auto-sync enabled.
-    $auto_sync_list = get_option( 'ls_auto_sync', [] );
-    $auto_sync_list2 = get_option( 'ls_auto_sync_motors', [] );
-
-//     if ( empty( $auto_sync_list ) ) {
-//         // ls_log( 'No CMFs available for auto-sync.' );
-//         return; // No CMFs to sync.
-//     }
-
-    // foreach ( $auto_sync_list as $cmf ) {
-    //     // ls_log( "Processing CMF: {$cmf}" );
-    //     // Fetch data for the current CMF.
-    //     $parts = ls_sync_parts_inventory( $cmf );
-
-    //     // Sync each part to WooCommerce.
-    //     if ( is_array( $parts ) ) {
-    //         $run_id = date( 'Y-m-d_H-i-s' );
-    //         foreach ( $parts as $part ) {
-    //             sync_part_to_woocommerce( $part, $run_id );
-    //             // ls_log( "Synced product ID & part #: {$product_id} - {$part['PartNumber']} for CMF: {$cmf}" );
-    //         }
-    //     } else {
-    //         // Log error if the data fetch failed.
-    //         error_log( "Failed to fetch data for CMF: $cmf" );
-    //     }
-    // }
-
-    if ( empty( $auto_sync_list2 ) ) {
-        ls_motors_log( [ 'message' => 'No CMFs available for auto-sync.' ], $run_id );
-        delete_option( 'ls_cron_motors_state' );
-        return;
-    }
+    error_log( 'handle_ls_auto_sync_cron triggered at ' . date( 'Y-m-d H:i:s' ) );
+    ls_motors_log( [ 'message' => 'Cron job triggered' ], $run_id );
 
     $chunk_size = defined( 'LS_SYNC_CHUNK_SIZE' ) ? LS_SYNC_CHUNK_SIZE : 15;
     $max_sec    = defined( 'LS_SYNC_MAX_SEC_PER_REQUEST' ) ? LS_SYNC_MAX_SEC_PER_REQUEST : 20;
-    $state_key  = 'ls_cron_motors_state';
 
-    $state     = get_option( $state_key, [] );
-    $cmf_index = isset( $state['cmf_index'] ) ? (int) $state['cmf_index'] : 0;
-    $cursor    = isset( $state['cursor'] ) ? (int) $state['cursor'] : 0;
-
-    if ( $cmf_index >= count( $auto_sync_list2 ) ) {
-        $cmf_index = 0;
-        $cursor    = 0;
+    // WooCommerce chunk (when any CMF has Auto Sync enabled on Sync for WooCommerce page).
+    $auto_sync_woo = get_option( 'ls_auto_sync', [] );
+    if ( ! empty( $auto_sync_woo ) && function_exists( 'ls_sync_parts_inventory_page' ) && function_exists( 'sync_part_to_woocommerce' ) ) {
+            $state_key  = 'ls_cron_woo_state';
+            $state      = get_option( $state_key, [] );
+            $cmf_index  = isset( $state['cmf_index'] ) ? (int) $state['cmf_index'] : 0;
+            $cursor     = isset( $state['cursor'] ) ? (int) $state['cursor'] : 0;
+            if ( $cmf_index >= count( $auto_sync_woo ) ) {
+                $cmf_index = 0;
+                $cursor    = 0;
+            }
+            $cmf  = $auto_sync_woo[ $cmf_index ];
+            $data = ls_sync_parts_inventory_page( $cmf, $cursor, $chunk_size, $run_id );
+            if ( is_string( $data ) ) {
+                error_log( "handle_ls_auto_sync_cron (Woo): Failed for CMF: $cmf - $data" );
+                $cmf_index++;
+                $cursor = 0;
+                update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => 0 ] );
+                if ( $cmf_index >= count( $auto_sync_woo ) ) {
+                    delete_option( $state_key );
+                }
+            } else {
+                $parts       = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
+                $start_time  = time();
+                $processed   = 0;
+                foreach ( $parts as $part ) {
+                    if ( ( time() - $start_time ) >= $max_sec ) {
+                        break;
+                    }
+                    sync_part_to_woocommerce( $part, $run_id );
+                    $processed++;
+                }
+                $cursor += $processed;
+                if ( function_exists( 'ls_sync_progress_log' ) ) {
+                    ls_sync_progress_log( $run_id, 'woo', $cmf, $cursor, $processed, 'sync', $cursor );
+                }
+                if ( $processed < $chunk_size ) {
+                    $cursor    = 0;
+                    $cmf_index++;
+                }
+                if ( $cmf_index >= count( $auto_sync_woo ) ) {
+                    delete_option( $state_key );
+                    if ( $processed > 0 && function_exists( 'nitropack_sdk_purge' ) ) {
+                        nitropack_sdk_purge( null, null, null );
+                    }
+                } else {
+                    update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => $cursor ] );
+                }
+            }
     }
 
-    $cmf  = $auto_sync_list2[ $cmf_index ];
-    $data = ls_sync_major_unit_page( $cmf, $cursor, $chunk_size, $run_id );
-
-    if ( is_string( $data ) ) {
-        ls_motors_log( [ 'message' => 'Failed to fetch motors for CMF: ' . $cmf, 'error' => $data ], $run_id );
-        error_log( "handle_ls_auto_sync_cron: Failed to fetch data for CMF: $cmf - $data" );
-        $cmf_index++;
-        $cursor = 0;
-        update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => 0 ] );
-        if ( $cmf_index >= count( $auto_sync_list2 ) ) {
-            delete_option( $state_key );
-            if ( function_exists( 'nitropack_sdk_purge' ) ) {
-                nitropack_sdk_purge( null, null, null );
+    // Motor Listings chunk (when any CMF has Auto Sync enabled on Sync for Motor Listings page).
+    $auto_sync_list2 = get_option( 'ls_auto_sync_motors', [] );
+    if ( empty( $auto_sync_list2 ) ) {
+            delete_option( 'ls_cron_motors_state' );
+        } else {
+            $state_key  = 'ls_cron_motors_state';
+            $state      = get_option( $state_key, [] );
+            $cmf_index  = isset( $state['cmf_index'] ) ? (int) $state['cmf_index'] : 0;
+            $cursor     = isset( $state['cursor'] ) ? (int) $state['cursor'] : 0;
+            if ( $cmf_index >= count( $auto_sync_list2 ) ) {
+                $cmf_index = 0;
+                $cursor    = 0;
+            }
+            $cmf  = $auto_sync_list2[ $cmf_index ];
+            $data = ls_sync_major_unit_page( $cmf, $cursor, $chunk_size, $run_id );
+            if ( is_string( $data ) ) {
+                ls_motors_log( [ 'message' => 'Failed to fetch motors for CMF: ' . $cmf, 'error' => $data ], $run_id );
+                error_log( "handle_ls_auto_sync_cron: Failed to fetch data for CMF: $cmf - $data" );
+                $cmf_index++;
+                $cursor = 0;
+                update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => 0 ] );
+                if ( $cmf_index >= count( $auto_sync_list2 ) ) {
+                    delete_option( $state_key );
+                    if ( function_exists( 'nitropack_sdk_purge' ) ) {
+                        nitropack_sdk_purge( null, null, null );
+                    }
+                }
+            } else {
+                $units      = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
+                $start_time = time();
+                $processed  = 0;
+                foreach ( $units as $part ) {
+                    if ( ( time() - $start_time ) >= $max_sec ) {
+                        break;
+                    }
+                    sync_part_to_motors( $part, $run_id );
+                    $processed++;
+                }
+                $cursor += $processed;
+                if ( function_exists( 'ls_sync_progress_log' ) ) {
+                    ls_sync_progress_log( $run_id, 'motors', $cmf, $cursor, $processed, 'sync', $cursor );
+                }
+                if ( $processed < $chunk_size ) {
+                    $cursor    = 0;
+                    $cmf_index++;
+                }
+                if ( $cmf_index >= count( $auto_sync_list2 ) ) {
+                    delete_option( $state_key );
+                    ls_motors_log( [ 'message' => 'Cron job execution completed (all CMFs synced).' ], $run_id );
+                    if ( function_exists( 'nitropack_sdk_purge' ) ) {
+                        nitropack_sdk_purge( null, null, null );
+                    }
+                } else {
+                    update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => $cursor ] );
+                    ls_motors_log( [ 'message' => 'Cron chunk done; more pages remain. CMF index: ' . $cmf_index . ', cursor: ' . $cursor ], $run_id );
+                }
             }
         }
-        return;
-    }
-
-    $units     = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
-    $start_time = time();
-    $processed  = 0;
-
-    foreach ( $units as $part ) {
-        if ( ( time() - $start_time ) >= $max_sec ) {
-            break;
-        }
-        sync_part_to_motors( $part, $run_id );
-        $processed++;
-    }
-
-    $cursor += $processed;
-    if ( function_exists( 'ls_sync_progress_log' ) ) {
-        ls_sync_progress_log( $run_id, 'motors', $cmf, $cursor, $processed, 'sync', $cursor );
-    }
-
-    if ( $processed < $chunk_size ) {
-        $cursor    = 0;
-        $cmf_index++;
-    }
-
-    if ( $cmf_index >= count( $auto_sync_list2 ) ) {
-        delete_option( $state_key );
-        ls_motors_log( [ 'message' => 'Cron job execution completed (all CMFs synced).' ], $run_id );
-        if ( function_exists( 'nitropack_sdk_purge' ) ) {
-            nitropack_sdk_purge( null, null, null );
-        }
-    } else {
-        update_option( $state_key, [ 'cmf_index' => $cmf_index, 'cursor' => $cursor ] );
-        ls_motors_log( [ 'message' => 'Cron chunk done; more pages remain. CMF index: ' . $cmf_index . ', cursor: ' . $cursor ], $run_id );
-    }
 }
 
 
