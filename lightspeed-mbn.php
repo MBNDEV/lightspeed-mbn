@@ -18,6 +18,12 @@ require_once plugin_dir_path( __FILE__ ) . 'includes/sync-woocommerce.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/sync-motors.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/sync-logs.php';
 
+// Ensure API logs table exists and daily cleanup is scheduled.
+ls_create_api_logs_table();
+if ( ! wp_next_scheduled( 'ls_cleanup_api_logs' ) ) {
+    wp_schedule_event( time(), 'daily', 'ls_cleanup_api_logs' );
+}
+
 // Add a "Settings" link to the plugin on the Plugins page.
 function ls_add_settings_link( $links ) {
     $settings_link = '<a href="' . admin_url( '?page=lightspeed-mbn' ) . '">Settings</a>';

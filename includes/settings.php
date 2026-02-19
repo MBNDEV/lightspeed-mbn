@@ -44,6 +44,10 @@ function ls_render_settings_page() {
         $cron_enabled = isset( $_POST['ls_cron_enabled'] ) ? 1 : 0;
         update_option( 'ls_cron_enabled', $cron_enabled );
 
+        // API log retention (days). Logs older than this are deleted automatically.
+        $retention_days = isset( $_POST['ls_log_retention_days'] ) ? max( 1, (int) $_POST['ls_log_retention_days'] ) : 30;
+        update_option( 'ls_log_retention_days', $retention_days );
+
         // Handle cron scheduling based on the checkbox value.
         if ( $cron_enabled ) {
             if ( ! wp_next_scheduled( 'ls_auto_sync_cron' ) ) {
@@ -87,6 +91,11 @@ function ls_render_settings_page() {
             }
         }
 
+        // Schedule daily API log cleanup if not already scheduled.
+        if ( ! wp_next_scheduled( 'ls_cleanup_api_logs' ) ) {
+            wp_schedule_event( time(), 'daily', 'ls_cleanup_api_logs' );
+        }
+
         echo '<div class="updated"><p>Settings saved!</p></div>';
     }
 
@@ -96,6 +105,10 @@ function ls_render_settings_page() {
     $password = get_option( 'ls_password', '' );
     $api_docs_url = get_option( 'ls_api_docs_url', '' );
     $cron_enabled = get_option( 'ls_cron_enabled', 0 ); // Default is disabled.
+    $log_retention_days = (int) get_option( 'ls_log_retention_days', 30 );
+    if ( $log_retention_days < 1 ) {
+        $log_retention_days = 30;
+    }
 
     // Display the form.
     ?>
@@ -144,6 +157,15 @@ function ls_render_settings_page() {
                     <td>
                         <input type="checkbox" name="ls_cron_enabled" id="ls_cron_enabled" value="1" <?php checked( $cron_enabled, 1 ); ?>>
                         <label for="ls_cron_enabled">Enable auto-sync every 1 day</label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="ls_log_retention_days">API log retention (days)</label>
+                    </th>
+                    <td>
+                        <input type="number" name="ls_log_retention_days" id="ls_log_retention_days" value="<?php echo esc_attr( $log_retention_days ); ?>" min="1" max="365" class="small-text">
+                        <p class="description">API call logs older than this many days are automatically deleted. Only API request/response logs are stored.</p>
                     </td>
                 </tr>
             </table>

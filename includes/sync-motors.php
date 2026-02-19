@@ -16,9 +16,15 @@ function ls_render_sync_motors_page() {
 
     // Fetch dealer data from the API.
     $dealer_data = ls_api_request_dealer();
-    $part_data = isset( $_POST['sync_cmf'] ) ? ls_sync_major_unit( sanitize_text_field( $_POST['sync_cmf'] ) ) : null;
-    $review = isset( $_POST['sync_review'] ) ? ls_sync_major_unit( sanitize_text_field( $_POST['sync_review'] ) ) : null;
-    $newData = isset( $_POST['sync_new'] ) ? ls_sync_major_unit( sanitize_text_field( $_POST['sync_new'] ) ) : null;
+
+    // Use a single run_id for API logging when user clicks Sync, Review, or Sync New.
+    $run_id = ( isset( $_POST['sync_cmf'] ) || isset( $_POST['sync_review'] ) || isset( $_POST['sync_new'] ) )
+        ? date( 'Y-m-d_H-i-s' )
+        : null;
+
+    $part_data = isset( $_POST['sync_cmf'] ) ? ls_sync_major_unit( sanitize_text_field( $_POST['sync_cmf'] ), $run_id ) : null;
+    $review = isset( $_POST['sync_review'] ) ? ls_sync_major_unit( sanitize_text_field( $_POST['sync_review'] ), $run_id ) : null;
+    $newData = isset( $_POST['sync_new'] ) ? ls_sync_major_unit( sanitize_text_field( $_POST['sync_new'] ), $run_id ) : null;
 
     ?>
     <div class="wrap">

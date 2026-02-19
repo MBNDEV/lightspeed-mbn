@@ -98,7 +98,14 @@ function ls_sync_parts_inventory( $cmf ) {
     return $data;
 }
 
-function ls_sync_major_unit( $cmf ) {
+/**
+ * Fetch Unit list for a CMF from the API.
+ *
+ * @param string     $cmf    CMF identifier.
+ * @param string|null $run_id Optional. Run ID for API logging (e.g. when triggered by Sync/Sync New buttons).
+ * @return array|string Decoded data array or error string.
+ */
+function ls_sync_major_unit( $cmf, $run_id = null ) {
     // Retrieve API credentials from wp_options.
     $api_url = get_option( 'ls_api_url', '' );
     $username = get_option( 'ls_username', '' );
@@ -124,15 +131,29 @@ function ls_sync_major_unit( $cmf ) {
         'timeout' => 15,
     ] );
 
+    $status_code = is_wp_error( $response ) ? 500 : wp_remote_retrieve_response_code( $response );
+    $response_body = is_wp_error( $response ) ? '' : wp_remote_retrieve_body( $response );
+    $response_headers = is_wp_error( $response ) ? [] : wp_remote_retrieve_headers( $response );
+
+    // Log API call when run_id is provided (e.g. from Sync / Sync New buttons).
+    if ( $run_id !== null && $run_id !== '' ) {
+        ls_motors_log( [
+            'StockNumber'   => $cmf,
+            'endpoint'      => $endpoint,
+            'response_body'  => $response_body,
+            'headers'       => $response_headers,
+            'status_code'   => $status_code,
+        ], $run_id );
+    }
+
     // Check for errors.
     if ( is_wp_error( $response ) ) {
         return 'Error: ' . $response->get_error_message();
     }
 
     // Retrieve the response body and decode it.
-    $response_body = wp_remote_retrieve_body( $response );
     $data = json_decode( $response_body, true );
-    
+
     // Check for JSON decoding errors.
     if ( json_last_error() !== JSON_ERROR_NONE ) {
         return 'Error decoding JSON response: ' . json_last_error_msg();
