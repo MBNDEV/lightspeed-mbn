@@ -75,5 +75,20 @@ function ls_add_settings_pages() {
         'ls-sync-logs',    // Submenu slug
         'ls_display_log_files'     // Callback function to render the settings page
     );
+
+    add_submenu_page(
+        'lightspeed-mbn',             // Parent menu slug
+        'API Documentation',          // Page title
+        'API Documentation',          // Submenu title
+        'manage_options',             // Capability
+        'ls-api-documentation',       // Submenu slug
+        function() {
+            $url = get_option( 'ls_api_docs_url', '' );
+            if ( $url ) {
+                wp_redirect( $url );
+                exit;
+            }
+        }
+    );
 }
 add_action( 'admin_menu', 'ls_add_settings_pages' );

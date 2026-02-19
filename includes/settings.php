@@ -38,6 +38,7 @@ function ls_render_settings_page() {
         update_option( 'ls_api_url', sanitize_text_field( $_POST['ls_api_url'] ) );
         update_option( 'ls_username', sanitize_text_field( $_POST['ls_username'] ) );
         update_option( 'ls_password', sanitize_text_field( $_POST['ls_password'] ) );
+        update_option( 'ls_api_docs_url', esc_url_raw( $_POST['ls_api_docs_url'] ) );
 
         // Update cron enable/disable option.
         $cron_enabled = isset( $_POST['ls_cron_enabled'] ) ? 1 : 0;
@@ -93,6 +94,7 @@ function ls_render_settings_page() {
     $api_url = get_option( 'ls_api_url', '' );
     $username = get_option( 'ls_username', '' );
     $password = get_option( 'ls_password', '' );
+    $api_docs_url = get_option( 'ls_api_docs_url', '' );
     $cron_enabled = get_option( 'ls_cron_enabled', 0 ); // Default is disabled.
 
     // Display the form.
@@ -124,6 +126,15 @@ function ls_render_settings_page() {
                     </th>
                     <td>
                         <input type="password" name="ls_password" id="ls_password" value="<?php echo esc_attr( $password ); ?>" class="regular-text" required>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="ls_api_docs_url">API Documentation URL</label>
+                    </th>
+                    <td>
+                        <input type="url" name="ls_api_docs_url" id="ls_api_docs_url" value="<?php echo esc_attr( $api_docs_url ); ?>" class="large-text">
+                        <p class="description">URL for the API Documentation submenu link (opens in redirect).</p>
                     </td>
                 </tr>
                 <tr>
@@ -201,6 +212,10 @@ function handle_ls_auto_sync_cron() {
         return; // No CMFs to sync.
     }
 
+    // #region agent log
+    $log_path = dirname( plugin_dir_path( __FILE__ ) ) . '/.cursor/debug-63247a.log';
+    @file_put_contents( $log_path, json_encode( [ 'sessionId' => '63247a', 'hypothesisId' => 'B', 'location' => 'settings.php:handle_ls_auto_sync_cron', 'message' => 'Auto sync cron started', 'data' => [ 'cmf_count' => count( $auto_sync_list2 ) ], 'timestamp' => (int) ( microtime( true ) * 1000 ) ] ) . "\n", FILE_APPEND | LOCK_EX );
+    // #endregion
     foreach ( $auto_sync_list2 as $cmf ) {
         // ls_log( "Processing CMF: {$cmf}" );
         // Fetch data for the current CMF.
@@ -260,6 +275,10 @@ function handle_ls_update_sync_cron() {
     ], $run_id);
 
     $listings = get_all_listings_posts_with_stocknumber();
+    // #region agent log
+    $log_path = dirname( plugin_dir_path( __FILE__ ) ) . '/.cursor/debug-63247a.log';
+    @file_put_contents( $log_path, json_encode( [ 'sessionId' => '63247a', 'hypothesisId' => 'A', 'location' => 'settings.php:handle_ls_update_sync_cron', 'message' => 'Status cron started', 'data' => [ 'listing_count' => count( $listings ) ], 'timestamp' => (int) ( microtime( true ) * 1000 ) ] ) . "\n", FILE_APPEND | LOCK_EX );
+    // #endregion
     foreach ($listings as $listing) {
         ls_motors_log([
             'ID' => $listing['ID'],
