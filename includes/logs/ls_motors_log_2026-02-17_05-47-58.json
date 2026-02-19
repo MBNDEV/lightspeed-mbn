@@ -1,0 +1,40 @@
+[
+    {
+        "message": "Cron job triggered - Image upload (check no image)",
+        "start_time": "2026-02-17 05:47:58",
+        "memory_limit": "512M",
+        "max_execution_time": "3300 seconds",
+        "timestamp": "2026-02-17 05:47:58"
+    },
+    {
+        "message": "Processing CMF: 76251145",
+        "elapsed_time": "0 seconds",
+        "timestamp": "2026-02-17 05:47:58"
+    },
+    {
+        "message": "Failed to fetch motors for CMF: 76251145",
+        "error": "Error decoding JSON response: Syntax error",
+        "timestamp": "2026-02-17 05:47:58"
+    },
+    {
+        "message": "Clearing Nitropack cache.",
+        "timestamp": "2026-02-17 05:47:58"
+    },
+    {
+        "message": "Nitropack cache cleared successfully.",
+        "timestamp": "2026-02-17 05:47:58"
+    },
+    {
+        "message": "Cron job execution completed (check no image)",
+        "summary": {
+            "total_processed": 0,
+            "total_success": 0,
+            "total_failed": 0,
+            "total_skipped": 0,
+            "execution_time": "0 seconds",
+            "end_time": "2026-02-17 05:47:58",
+            "peak_memory_usage": "236 MB"
+        },
+        "timestamp": "2026-02-17 05:47:58"
+    }
+]
