@@ -234,10 +234,6 @@ function handle_ls_auto_sync_cron() {
         return; // No CMFs to sync.
     }
 
-    // #region agent log
-    $log_path = dirname( plugin_dir_path( __FILE__ ) ) . '/.cursor/debug-63247a.log';
-    @file_put_contents( $log_path, json_encode( [ 'sessionId' => '63247a', 'hypothesisId' => 'B', 'location' => 'settings.php:handle_ls_auto_sync_cron', 'message' => 'Auto sync cron started', 'data' => [ 'cmf_count' => count( $auto_sync_list2 ) ], 'timestamp' => (int) ( microtime( true ) * 1000 ) ] ) . "\n", FILE_APPEND | LOCK_EX );
-    // #endregion
     foreach ( $auto_sync_list2 as $cmf ) {
         // ls_log( "Processing CMF: {$cmf}" );
         // Fetch data for the current CMF.
@@ -297,24 +293,19 @@ function handle_ls_update_sync_cron() {
     ], $run_id);
 
     $listings = get_all_listings_posts_with_stocknumber();
-    // #region agent log
-    $log_path = dirname( plugin_dir_path( __FILE__ ) ) . '/.cursor/debug-63247a.log';
-    @file_put_contents( $log_path, json_encode( [ 'sessionId' => '63247a', 'hypothesisId' => 'A', 'location' => 'settings.php:handle_ls_update_sync_cron', 'message' => 'Status cron started', 'data' => [ 'listing_count' => count( $listings ) ], 'timestamp' => (int) ( microtime( true ) * 1000 ) ] ) . "\n", FILE_APPEND | LOCK_EX );
-    // #endregion
     foreach ($listings as $listing) {
         ls_motors_log([
             'ID' => $listing['ID'],
             'StockNumber' => $listing['stock_number'],
         ], $run_id);
         $unit = get_single_unit($listing['stock_number'], $run_id);
-        if($unit['status_code'] === 500) {
+        if ( $unit['status_code'] !== 200 ) {
             ls_motors_log([
-                'message' => "Error fetching unit data for StockNumber: {$listing['stock_number']}"
+                'message' => isset( $unit['message'] ) ? $unit['message'] : "Error fetching unit data for StockNumber: {$listing['stock_number']}"
             ], $run_id);
-            continue; // Skip this listing if there's an error.
-        } else {
-            update_motors_status($listing['ID'], $unit['data'], $run_id);
+            continue; // Skip this listing on error or rate limit (429).
         }
+        update_motors_status($listing['ID'], $unit['data'], $run_id);
     }
 
      if(function_exists("nitropack_sdk_purge")) {

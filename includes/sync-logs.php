@@ -81,12 +81,19 @@ function ls_motors_log( $sync_data, $run_id ) {
         ls_create_api_logs_table();
     }
 
-    $stock_number  = isset( $sync_data['StockNumber'] ) ? sanitize_text_field( (string) $sync_data['StockNumber'] ) : '';
-    $endpoint      = isset( $sync_data['endpoint'] ) ? sanitize_text_field( $sync_data['endpoint'] ) : '';
+    // If table has legacy schema (old columns), recreate with current schema so insert succeeds.
+    if ( ls_api_logs_table_schema() === 'legacy' ) {
+        $wpdb->query( "DROP TABLE IF EXISTS `$table`" );
+        ls_create_api_logs_table();
+    }
+
+    $run_id       = is_scalar( $run_id ) ? (string) $run_id : '';
+    $stock_number = isset( $sync_data['StockNumber'] ) ? sanitize_text_field( (string) $sync_data['StockNumber'] ) : '';
+    $endpoint     = isset( $sync_data['endpoint'] ) ? sanitize_text_field( $sync_data['endpoint'] ) : '';
     $response_body = isset( $sync_data['response_body'] ) ? wp_unslash( $sync_data['response_body'] ) : '';
-    $headers       = isset( $sync_data['headers'] ) ? wp_json_encode( is_array( $sync_data['headers'] ) ? $sync_data['headers'] : (array) $sync_data['headers'] ) : '';
-    $status_code   = isset( $sync_data['status_code'] ) ? (int) $sync_data['status_code'] : 0;
-    $timestamp     = date( 'Y-m-d H:i:s' );
+    $headers      = isset( $sync_data['headers'] ) ? wp_json_encode( is_array( $sync_data['headers'] ) ? $sync_data['headers'] : (array) $sync_data['headers'] ) : '';
+    $status_code  = isset( $sync_data['status_code'] ) ? (int) $sync_data['status_code'] : 0;
+    $timestamp    = date( 'Y-m-d H:i:s' );
 
     $result = $wpdb->insert(
         $table,
@@ -101,7 +108,7 @@ function ls_motors_log( $sync_data, $run_id ) {
         ],
         [ '%s', '%s', '%s', '%s', '%s', '%d', '%s' ]
     );
-    if ( $result === false && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+    if ( $result === false ) {
         error_log( 'ls_motors_log insert failed. Table: ' . $table . ', wpdb->last_error: ' . $wpdb->last_error );
     }
 }
@@ -348,7 +355,7 @@ function ls_display_log_files() {
     if ( empty( $rows ) ) {
         echo '<div class="notice notice-info inline" style="margin:10px 0;"><p><strong>No API log rows to list.</strong>';
         if ( $total_in_db === 0 ) {
-            echo ' Table <code>' . esc_html( $table ) . '</code> is empty. Logs are written only when an API request is made that includes an <code>endpoint</code>: (1) <strong>Sync</strong> / <strong>Sync New</strong> / <strong>Review</strong> on <strong>Lightspeed MBN → Sync for Motor Listings</strong>, or (2) the status-update cron that fetches single units. Run one of those to create log entries.';
+            echo ' Table <code>' . esc_html( $table ) . '</code> is empty. Logs are written only when an API request is made that includes an <code>endpoint</code>: (1) <strong>Sync</strong> / <strong>Sync New</strong> / <strong>Review</strong> on <strong>Lightspeed MBN → Sync for Motor Listings</strong> or <strong>Sync for WooCommerce</strong>, or (2) the status-update cron that fetches single units. Run one of those to create log entries.';
         } else {
             echo ' No rows match the current filters. <a href="' . esc_url( $base_url ) . '">Click Reset</a> to clear filters and show all logs.';
         }

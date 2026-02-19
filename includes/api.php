@@ -4,6 +4,51 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+/**
+ * 3PA API rate limit (Lightspeed docs: "Limit your requests to no more than 200 requests per minute").
+ * We only issue calls when under a per-minute cap so we never wait for the API to return rate limit.
+ */
+const LS_3PA_RATE_LIMIT_DOCS_MAX   = 200;  // Docs: max 200 requests per minute.
+const LS_3PA_RATE_LIMIT_CAP        = 180;  // Our cap: 200 with margin to avoid hitting API limit.
+const LS_3PA_RATE_LIMIT_WINDOW_SEC = 60;
+const LS_3PA_RATE_LIMIT_OPTION     = 'ls_3pa_request_timestamps';
+const LS_3PA_RATE_LIMIT_MESSAGE    = 'Rate limit: too many requests per minute. Try again later.';
+
+/**
+ * Record that a 3PA request was made (for sliding-window rate limit).
+ */
+function ls_3pa_record_request() {
+    $timestamps = (array) get_option( LS_3PA_RATE_LIMIT_OPTION, [] );
+    $now        = microtime( true );
+    $cutoff     = $now - LS_3PA_RATE_LIMIT_WINDOW_SEC;
+    $timestamps = array_values( array_filter( $timestamps, function ( $t ) use ( $cutoff ) {
+        return $t >= $cutoff;
+    } ) );
+    $timestamps[] = $now;
+    update_option( LS_3PA_RATE_LIMIT_OPTION, $timestamps );
+}
+
+/**
+ * Validate before 3PA API call: ensure we are under 200/min with margin (180/min).
+ * Returns true if request is allowed (and records it). Returns false if at cap — do not call API; cut/return.
+ * Call this immediately before every wp_remote_get to 3PA; do not change wp_remote_get.
+ *
+ * @return bool True if allowed to send request, false if still waiting / at rate limit (skip request).
+ */
+function ls_3pa_validate_before_request() {
+    $timestamps = (array) get_option( LS_3PA_RATE_LIMIT_OPTION, [] );
+    $now        = microtime( true );
+    $cutoff     = $now - LS_3PA_RATE_LIMIT_WINDOW_SEC;
+    $timestamps = array_values( array_filter( $timestamps, function ( $t ) use ( $cutoff ) {
+        return $t >= $cutoff;
+    } ) );
+    if ( count( $timestamps ) >= LS_3PA_RATE_LIMIT_CAP ) {
+        return false;
+    }
+    ls_3pa_record_request();
+    return true;
+}
+
 // Function to handle the API request.
 function ls_api_request_dealer() {
     // Get the API credentials from the wp_options table.
@@ -25,7 +70,9 @@ function ls_api_request_dealer() {
         'Content-Type'  => 'application/json',
     ];
 
-    // Use wp_remote_get to make the request.
+    if ( ! ls_3pa_validate_before_request() ) {
+        return LS_3PA_RATE_LIMIT_MESSAGE;
+    }
     $response = wp_remote_get( $endpoint, [
         'headers' => $headers,
     ] );
@@ -54,20 +101,35 @@ function ls_api_request_dealer() {
     return $data;
 }
 
-// Function to sync data for a specific CMF.
-function ls_sync_parts_inventory( $cmf ) {
+/**
+ * Sync parts inventory for a CMF from the API.
+ *
+ * @param string     $cmf    CMF identifier.
+ * @param string|null $run_id Optional. Run ID for API logging (e.g. when triggered by Sync/Review/Sync New buttons).
+ * @return array|string Decoded data array or error string.
+ */
+function ls_sync_parts_inventory( $cmf, $run_id = null ) {
     // Retrieve API credentials from wp_options.
     $api_url = get_option( 'ls_api_url', '' );
     $username = get_option( 'ls_username', '' );
     $password = get_option( 'ls_password', '' );
 
+    // Prepare the API endpoint (used for request and for logging).
+    $endpoint = rtrim( $api_url ) . "/Part/".$cmf."?\$top=5";
+
     // Check if credentials are available.
     if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
+        if ( $run_id !== null && $run_id !== '' ) {
+            ls_motors_log( [
+                'StockNumber'   => $cmf,
+                'endpoint'      => $endpoint,
+                'response_body' => '',
+                'headers'       => [],
+                'status_code'   => 0,
+            ], $run_id );
+        }
         return 'Missing API credentials. Please set ls_api_url, ls_username, and ls_password in the settings.';
     }
-
-    // Prepare the API endpoint.
-    $endpoint = rtrim( $api_url ) . "/Part/".$cmf."?\$top=5";
 
     // Prepare the headers for authentication.
     $headers = [
@@ -75,11 +137,37 @@ function ls_sync_parts_inventory( $cmf ) {
         'Content-Type'  => 'application/json',
     ];
 
-    // Make the API request.
+    if ( ! ls_3pa_validate_before_request() ) {
+        if ( $run_id !== null && $run_id !== '' ) {
+            ls_motors_log( [
+                'StockNumber'   => $cmf,
+                'endpoint'      => $endpoint,
+                'response_body' => '',
+                'headers'       => [],
+                'status_code'   => 429,
+            ], $run_id );
+        }
+        return LS_3PA_RATE_LIMIT_MESSAGE;
+    }
     $response = wp_remote_get( $endpoint, [
         'headers' => $headers,
         'timeout' => 15,
     ] );
+
+    $status_code = is_wp_error( $response ) ? 500 : wp_remote_retrieve_response_code( $response );
+    $response_body = is_wp_error( $response ) ? '' : wp_remote_retrieve_body( $response );
+    $response_headers = is_wp_error( $response ) ? [] : wp_remote_retrieve_headers( $response );
+
+    // Log API call when run_id is provided (e.g. from Sync / Review / Sync New buttons).
+    if ( $run_id !== null && $run_id !== '' ) {
+        ls_motors_log( [
+            'StockNumber'    => $cmf,
+            'endpoint'       => $endpoint,
+            'response_body'  => $response_body,
+            'headers'        => $response_headers,
+            'status_code'    => $status_code,
+        ], $run_id );
+    }
 
     // Check for errors.
     if ( is_wp_error( $response ) ) {
@@ -87,7 +175,6 @@ function ls_sync_parts_inventory( $cmf ) {
     }
 
     // Retrieve the response body and decode it.
-    $response_body = wp_remote_retrieve_body( $response );
     $data = json_decode( $response_body, true );
 
     // Check for JSON decoding errors.
@@ -111,13 +198,22 @@ function ls_sync_major_unit( $cmf, $run_id = null ) {
     $username = get_option( 'ls_username', '' );
     $password = get_option( 'ls_password', '' );
 
+    // Prepare the API endpoint (used for request and for logging).
+    $endpoint = rtrim( $api_url ) . "/Unit/".$cmf;
+
     // Check if credentials are available.
     if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
+        if ( $run_id !== null && $run_id !== '' ) {
+            ls_motors_log( [
+                'StockNumber'   => $cmf,
+                'endpoint'      => $endpoint,
+                'response_body' => '',
+                'headers'       => [],
+                'status_code'   => 0,
+            ], $run_id );
+        }
         return 'Missing API credentials. Please set ls_api_url, ls_username, and ls_password in the settings.';
     }
-
-    // Prepare the API endpoint.
-    $endpoint = rtrim( $api_url ) . "/Unit/".$cmf;
 
     // Prepare the headers for authentication.
     $headers = [
@@ -125,7 +221,18 @@ function ls_sync_major_unit( $cmf, $run_id = null ) {
         'Content-Type'  => 'application/json',
     ];
 
-    // Make the API request.
+    if ( ! ls_3pa_validate_before_request() ) {
+        if ( $run_id !== null && $run_id !== '' ) {
+            ls_motors_log( [
+                'StockNumber'   => $cmf,
+                'endpoint'      => $endpoint,
+                'response_body' => '',
+                'headers'       => [],
+                'status_code'   => 429,
+            ], $run_id );
+        }
+        return LS_3PA_RATE_LIMIT_MESSAGE;
+    }
     $response = wp_remote_get( $endpoint, [
         'headers' => $headers,
         'timeout' => 15,
@@ -182,7 +289,12 @@ function get_single_unit($stock_number, $run_id) {
         'Content-Type'  => 'application/json',
     ];
 
-    // Make the API request.
+    if ( ! ls_3pa_validate_before_request() ) {
+        return [
+            'message'     => LS_3PA_RATE_LIMIT_MESSAGE,
+            'status_code' => 429,
+        ];
+    }
     $response = wp_remote_get( $endpoint, [
         'headers' => $headers,
         'timeout' => 15,
