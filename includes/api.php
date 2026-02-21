@@ -294,7 +294,18 @@ function ls_sync_major_unit( $cmf, $run_id = null ) {
     return $data;
 }
 
-function get_single_unit($stock_number, $run_id) {
+/**
+ * Fetch a single unit by stock number.
+ *
+ * @param string      $stock_number Stock number of the unit.
+ * @param string|null $run_id       Run ID for API logging.
+ * @param string|null $cmf          CMF (dealer code). Default 76251145 for backward compatibility.
+ * @return array{data: mixed, status_code: int, message?: string}
+ */
+function get_single_unit( $stock_number, $run_id, $cmf = null ) {
+    if ( $cmf === null || $cmf === '' ) {
+        $cmf = '76251145';
+    }
     // Retrieve API credentials from wp_options.
     $api_url = get_option( 'ls_api_url', '' );
     $username = get_option( 'ls_username', '' );
@@ -302,11 +313,12 @@ function get_single_unit($stock_number, $run_id) {
 
     // Check if credentials are available.
     if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
-        return ['data' => 'Missing API credentials. Please set ls_api_url, ls_username, and ls_password in the settings.', 'status_code' => 500];
+        return [ 'data' => null, 'status_code' => 500, 'message' => 'Missing API credentials.' ];
     }
 
-    // Prepare the API endpoint.
-    $endpoint = rtrim( $api_url ) . "/Unit/76251145/?\$filter=StockNumber eq '".$stock_number."'";
+    // OData filter: escape single quotes in stock number by doubling.
+    $safe_stock = str_replace( "'", "''", $stock_number );
+    $endpoint   = rtrim( $api_url ) . '/Unit/' . rawurlencode( $cmf ) . '/?$filter=StockNumber eq \'' . $safe_stock . '\'';
 
     // Prepare the headers for authentication.
     $headers = [

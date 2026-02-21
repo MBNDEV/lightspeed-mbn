@@ -45,6 +45,7 @@ function ls_render_sync_motors_page() {
     $is_next = ! empty( $_POST['sync_next_page'] );
     $cmf = null;
     $action = null;
+    $sync_by_stock_result = null;
     if ( isset( $_POST['sync_cmf'] ) ) {
         $cmf = sanitize_text_field( $_POST['sync_cmf'] );
         $action = 'sync';
@@ -54,6 +55,24 @@ function ls_render_sync_motors_page() {
     } elseif ( isset( $_POST['sync_new'] ) ) {
         $cmf = sanitize_text_field( $_POST['sync_new'] );
         $action = 'sync_new';
+    } elseif ( isset( $_POST['sync_by_stock_number'] ) && ! empty( $_POST['sync_by_stock_number_cmf'] ) && ! empty( $_POST['sync_by_stock_number_input'] ) ) {
+        $sync_cmf = sanitize_text_field( $_POST['sync_by_stock_number_cmf'] );
+        $stock_number = sanitize_text_field( $_POST['sync_by_stock_number_input'] );
+        $run_id = date( 'Y-m-d_H-i-s' );
+        $unit_response = get_single_unit( $stock_number, $run_id, $sync_cmf );
+        if ( $unit_response['status_code'] === 200 ) {
+            $data = $unit_response['data'];
+            $units = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
+            if ( ! empty( $units ) ) {
+                $part = $units[0];
+                $synced = sync_part_to_motors( $part, $run_id );
+                $sync_by_stock_result = $synced ? [ 'success' => true, 'post_id' => $synced, 'stock_number' => $stock_number, 'cmf' => $sync_cmf ] : [ 'success' => false, 'message' => 'Sync failed.' ];
+            } else {
+                $sync_by_stock_result = [ 'success' => false, 'message' => 'Unit not found for stock number: ' . $stock_number . '.' ];
+            }
+        } else {
+            $sync_by_stock_result = [ 'success' => false, 'message' => isset( $unit_response['message'] ) ? $unit_response['message'] : 'API error (HTTP ' . ( $unit_response['status_code'] ?? 0 ) . ').' ];
+        }
     }
 
     if ( $motors_sync_disabled && ( $cmf !== null || $is_next ) ) {
@@ -176,6 +195,13 @@ function ls_render_sync_motors_page() {
                 <p>Sync has been disabled.</p>
             </div>
         <?php endif; ?>
+        <?php if ( $sync_by_stock_result !== null ): ?>
+            <div class="notice notice-<?php echo $sync_by_stock_result['success'] ? 'success' : 'error'; ?> is-dismissible">
+                <p><?php echo $sync_by_stock_result['success']
+                    ? 'Synced by stock number: ' . esc_html( $sync_by_stock_result['stock_number'] ) . ' (CMF: ' . esc_html( $sync_by_stock_result['cmf'] ) . ') → Motor Listing ID: ' . (int) $sync_by_stock_result['post_id']
+                    : esc_html( $sync_by_stock_result['message'] ); ?></p>
+            </div>
+        <?php endif; ?>
 
         <?php if ( is_string( $dealer_data ) ): ?>
             <div class="notice notice-error">
@@ -216,6 +242,11 @@ function ls_render_sync_motors_page() {
                                         <form method="post" action=""><input type="hidden" name="sync_review" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="review_button" class="button">Review</button></form>
                                         <form method="post" action=""><input type="hidden" name="sync_new" value="<?php echo esc_attr( $cmf ); ?>"><button type="submit" name="new_button" class="button">Sync New</button></form>
                                     <?php endif; ?>
+                                    <form method="post" action="" style="display: inline-flex; align-items: center; gap: 4px;">
+                                        <input type="hidden" name="sync_by_stock_number_cmf" value="<?php echo esc_attr( $cmf ); ?>">
+                                        <input type="text" name="sync_by_stock_number_input" placeholder="Stock #" size="10" maxlength="32" style="max-width: 90px;">
+                                        <button type="submit" name="sync_by_stock_number" class="button">Sync by Stock #</button>
+                                    </form>
                                 </td>
                                 <td>
                                     <form method="post" action="">
