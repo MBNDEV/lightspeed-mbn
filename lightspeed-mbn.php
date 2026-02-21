@@ -2,9 +2,18 @@
 /**
  * Plugin Name: Lightspeed MBN
  * Description: A plugin to sync lightspeed products
- * Version: 1.0
+ * Version: 1.0.0
  * Author: MyBizNiche
  */
+
+require_once plugin_dir_path(__FILE__) . 'vendor/autoload.php';
+
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
+ PucFactory::buildUpdateChecker(
+  'https://github.com/MBNDEV/lightspeed-mbn',
+  __FILE__,
+  'lightspeed-mbn'
+);
 
 // Prevent direct access to the file.
 if ( ! defined( 'ABSPATH' ) ) {
