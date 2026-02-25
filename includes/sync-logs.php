@@ -59,17 +59,17 @@ function ls_create_api_logs_table() {
 }
 
 /**
- * Log only API call-related data to the database.
- * Only writes when the payload contains 'endpoint' (API request/response).
- * All other ls_motors_log() calls are no-ops.
+ * Log API call-related data and sync events (e.g. v2 skipped no change) to the database.
+ * Writes when the payload contains 'endpoint' (API request/response) or when it has no endpoint
+ * but has other keys (e.g. action, message) — then endpoint is derived for display.
  *
  * Table: {wpdb->prefix}ls_api_logs (e.g. tzt_ls_api_logs).
  *
- * @param array  $sync_data Data containing endpoint, status_code, response_body, headers, StockNumber.
+ * @param array  $sync_data Data containing endpoint, status_code, response_body, headers, StockNumber; or action/message etc. when no endpoint.
  * @param string $run_id    Run identifier (e.g. date-based).
  */
 function ls_motors_log( $sync_data, $run_id ) {
-    if ( ! isset( $sync_data['endpoint'] ) ) {
+    if ( ! is_array( $sync_data ) || empty( $sync_data ) ) {
         return;
     }
 
@@ -87,12 +87,24 @@ function ls_motors_log( $sync_data, $run_id ) {
         ls_create_api_logs_table();
     }
 
-    $run_id       = is_scalar( $run_id ) ? (string) $run_id : '';
-    $stock_number = isset( $sync_data['StockNumber'] ) ? sanitize_text_field( (string) $sync_data['StockNumber'] ) : '';
-    $endpoint     = isset( $sync_data['endpoint'] ) ? sanitize_text_field( $sync_data['endpoint'] ) : '';
+    $run_id        = is_scalar( $run_id ) ? (string) $run_id : '';
+    $stock_number  = isset( $sync_data['StockNumber'] ) ? sanitize_text_field( (string) $sync_data['StockNumber'] ) : '';
     $response_body = isset( $sync_data['response_body'] ) ? wp_unslash( $sync_data['response_body'] ) : '';
-    $headers      = isset( $sync_data['headers'] ) ? wp_json_encode( is_array( $sync_data['headers'] ) ? $sync_data['headers'] : (array) $sync_data['headers'] ) : '';
-    $status_code  = isset( $sync_data['status_code'] ) ? (int) $sync_data['status_code'] : 0;
+
+    if ( isset( $sync_data['endpoint'] ) && $sync_data['endpoint'] !== '' ) {
+        $endpoint = sanitize_text_field( $sync_data['endpoint'] );
+    } else {
+        $endpoint = isset( $sync_data['action'] ) ? 'sync-event:' . sanitize_text_field( (string) $sync_data['action'] ) : 'sync-event';
+        if ( $stock_number !== '' ) {
+            $endpoint .= ':' . $stock_number;
+        }
+        if ( $response_body === '' && ( isset( $sync_data['action'] ) || isset( $sync_data['message'] ) || isset( $sync_data['listing_id'] ) ) ) {
+            $response_body = wp_json_encode( array_intersect_key( $sync_data, array_flip( [ 'action', 'message', 'listing_id', 'cmf', 'count', 'skip', 'filter', 'phase', 'error' ] ) ) );
+        }
+    }
+
+    $headers     = isset( $sync_data['headers'] ) ? wp_json_encode( is_array( $sync_data['headers'] ) ? $sync_data['headers'] : (array) $sync_data['headers'] ) : '';
+    $status_code = isset( $sync_data['status_code'] ) ? (int) $sync_data['status_code'] : 0;
     $timestamp    = date( 'Y-m-d H:i:s' );
 
     $result = $wpdb->insert(
@@ -389,7 +401,7 @@ function ls_display_log_files() {
     if ( empty( $rows ) ) {
         echo '<div class="notice notice-info inline" style="margin:10px 0;"><p><strong>No API log rows to list.</strong>';
         if ( $total_in_db === 0 ) {
-            echo ' Table <code>' . esc_html( $table ) . '</code> is empty. Logs are written only when an API request is made that includes an <code>endpoint</code>: (1) <strong>Sync</strong> / <strong>Sync New</strong> / <strong>Review</strong> on <strong>Lightspeed MBN → Sync for Motor Listings</strong> or <strong>Sync for WooCommerce</strong>, or (2) the status-update cron that fetches single units. Run one of those to create log entries.';
+            echo ' Table <code>' . esc_html( $table ) . '</code> is empty. Logs are written when: (1) an API request is made (payload includes <code>endpoint</code>), e.g. <strong>Sync</strong> / <strong>Sync New</strong> / <strong>Review</strong> on <strong>Lightspeed MBN → Sync for Motor Listings</strong> or <strong>Sync for WooCommerce</strong>, or the status-update cron; (2) sync events without an endpoint (e.g. v2 skipped no change) are also logged. Run a sync or use WP-CLI to create log entries.';
         } else {
             echo ' No rows match the current filters. <a href="' . esc_url( $base_url ) . '">Click Reset</a> to clear filters and show all logs.';
         }

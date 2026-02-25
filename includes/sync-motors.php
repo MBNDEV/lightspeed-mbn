@@ -56,22 +56,29 @@ function ls_render_sync_motors_page() {
         $cmf = sanitize_text_field( $_POST['sync_new'] );
         $action = 'sync_new';
     } elseif ( isset( $_POST['sync_by_stock_number'] ) && ! empty( $_POST['sync_by_stock_number_cmf'] ) && ! empty( $_POST['sync_by_stock_number_input'] ) ) {
-        $sync_cmf = sanitize_text_field( $_POST['sync_by_stock_number_cmf'] );
+        $sync_cmf     = sanitize_text_field( $_POST['sync_by_stock_number_cmf'] );
         $stock_number = sanitize_text_field( $_POST['sync_by_stock_number_input'] );
-        $run_id = date( 'Y-m-d_H-i-s' );
-        $unit_response = get_single_unit( $stock_number, $run_id, $sync_cmf );
-        if ( $unit_response['status_code'] === 200 ) {
-            $data = $unit_response['data'];
-            $units = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
-            if ( ! empty( $units ) ) {
-                $part = $units[0];
-                $synced = sync_part_to_motors( $part, $run_id );
-                $sync_by_stock_result = $synced ? [ 'success' => true, 'post_id' => $synced, 'stock_number' => $stock_number, 'cmf' => $sync_cmf ] : [ 'success' => false, 'message' => 'Sync failed.' ];
-            } else {
-                $sync_by_stock_result = [ 'success' => false, 'message' => 'Unit not found for stock number: ' . $stock_number . '.' ];
-            }
+        if ( function_exists( 'ls_process_item_sync_stock_number' ) ) {
+            $result = ls_process_item_sync_stock_number( $stock_number, $sync_cmf );
+            $sync_by_stock_result = ! empty( $result['success'] )
+                ? [ 'success' => true, 'post_id' => (int) ( $result['post_id'] ?? 0 ), 'stock_number' => $stock_number, 'cmf' => $sync_cmf ]
+                : [ 'success' => false, 'message' => $result['message'] ?? 'Sync failed.' ];
         } else {
-            $sync_by_stock_result = [ 'success' => false, 'message' => isset( $unit_response['message'] ) ? $unit_response['message'] : 'API error (HTTP ' . ( $unit_response['status_code'] ?? 0 ) . ').' ];
+            $run_id         = date( 'Y-m-d_H-i-s' );
+            $unit_response  = get_single_unit( $stock_number, $run_id, $sync_cmf );
+            if ( $unit_response['status_code'] === 200 ) {
+                $data   = $unit_response['data'];
+                $units  = is_array( $data ) ? $data : ( isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : [] );
+                if ( ! empty( $units ) ) {
+                    $part   = $units[0];
+                    $synced = sync_part_to_motors( $part, $run_id );
+                    $sync_by_stock_result = $synced ? [ 'success' => true, 'post_id' => $synced, 'stock_number' => $stock_number, 'cmf' => $sync_cmf ] : [ 'success' => false, 'message' => 'Sync failed.' ];
+                } else {
+                    $sync_by_stock_result = [ 'success' => false, 'message' => 'Unit not found for stock number: ' . $stock_number . '.' ];
+                }
+            } else {
+                $sync_by_stock_result = [ 'success' => false, 'message' => isset( $unit_response['message'] ) ? $unit_response['message'] : 'API error (HTTP ' . ( $unit_response['status_code'] ?? 0 ) . ').' ];
+            }
         }
     }
 
@@ -927,6 +934,7 @@ function sync_motors_no_image( $part, $run_id ) {
 // }
 
 function motors_process_image($post_id, $part, $run_id){
+    global $wpdb;
     $start_time = microtime(true);
     $stock_number = isset($part['StockNumber']) ? $part['StockNumber'] : 'UNKNOWN';
     $image_stats = [
@@ -988,10 +996,23 @@ function motors_process_image($post_id, $part, $run_id){
             error_log("motors_process_image: Processing image #$index" . ($is_primary ? " (PRIMARY)" : "") . ": $image_url for stock number: $stock_number");
             error_log("motors_process_image: Memory before image #$index: " . round(memory_get_usage(true) / 1024 / 1024, 2) . " MB");
 
-            // Check if the image already exists in the media library
-            error_log("motors_process_image: Checking if image exists in media library: $image_url");
-            $attachment_id = attachment_url_to_postid($image_url);
-            error_log("motors_process_image: attachment_url_to_postid returned: " . ($attachment_id ? $attachment_id : 'false'));
+            // Check if an attachment already exists with this ImageUrl in metadata (skip re-download)
+            $attachment_id = null;
+            $existing_by_meta = $wpdb->get_var( $wpdb->prepare(
+                "SELECT p.ID FROM $wpdb->posts p
+                INNER JOIN $wpdb->postmeta pm ON p.ID = pm.post_id AND pm.meta_key = '_ls_image_url' AND pm.meta_value = %s
+                WHERE p.post_type = 'attachment' LIMIT 1",
+                $image_url
+            ) );
+            if ( $existing_by_meta ) {
+                $attachment_id = (int) $existing_by_meta;
+                error_log("motors_process_image: Found existing attachment by ImageUrl meta: $attachment_id for stock number: $stock_number");
+            }
+            if ( ! $attachment_id ) {
+                error_log("motors_process_image: Checking if image exists in media library: $image_url");
+                $attachment_id = attachment_url_to_postid($image_url);
+                error_log("motors_process_image: attachment_url_to_postid returned: " . ($attachment_id ? $attachment_id : 'false'));
+            }
             
             if ($attachment_id) {
                 $image_stats['existing']++;
@@ -1112,6 +1133,8 @@ function motors_process_image($post_id, $part, $run_id){
                         continue;
                     }
 
+                    update_post_meta( $attachment_id, '_ls_image_url', $image_url );
+
                     require_once(ABSPATH . 'wp-admin/includes/image.php');
                     
                     error_log("motors_process_image: STARTING wp_generate_attachment_metadata for attachment_id: $attachment_id (this can be slow)");
@@ -1225,6 +1248,7 @@ function motors_process_image($post_id, $part, $run_id){
 }
 
 function motors_process_image_if_no_thumbnail($post_id, $part, $run_id) {
+    global $wpdb;
     $start_time = microtime(true);
     $stock_number = isset($part['StockNumber']) ? $part['StockNumber'] : 'UNKNOWN';
     $image_stats = [
@@ -1290,7 +1314,19 @@ function motors_process_image_if_no_thumbnail($post_id, $part, $run_id) {
             
             error_log("motors_process_image_if_no_thumbnail: Processing image #$index" . ($is_primary ? " (PRIMARY)" : "") . ": $image_url for stock number: $stock_number");
 
-            $attachment_id = attachment_url_to_postid($image_url);
+            $attachment_id = null;
+            $existing_by_meta = $wpdb->get_var( $wpdb->prepare(
+                "SELECT p.ID FROM $wpdb->posts p
+                INNER JOIN $wpdb->postmeta pm ON p.ID = pm.post_id AND pm.meta_key = '_ls_image_url' AND pm.meta_value = %s
+                WHERE p.post_type = 'attachment' LIMIT 1",
+                $image_url
+            ) );
+            if ( $existing_by_meta ) {
+                $attachment_id = (int) $existing_by_meta;
+            }
+            if ( ! $attachment_id ) {
+                $attachment_id = attachment_url_to_postid($image_url);
+            }
             
             if ($attachment_id) {
                 $image_stats['existing']++;
@@ -1400,6 +1436,8 @@ function motors_process_image_if_no_thumbnail($post_id, $part, $run_id) {
                         @unlink($file_path);
                         continue;
                     }
+
+                    update_post_meta( $attachment_id, '_ls_image_url', $image_url );
 
                     require_once(ABSPATH . 'wp-admin/includes/image.php');
                     $attachment_data = wp_generate_attachment_metadata($attachment_id, $file_path);

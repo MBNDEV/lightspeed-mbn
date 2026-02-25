@@ -28,6 +28,7 @@ require_once plugin_dir_path( __FILE__ ) . 'includes/settings.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/sync-woocommerce.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/sync-motors.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/sync-logs.php';
+require_once plugin_dir_path( __FILE__ ) . 'v2/includes/bootstrap.php';
 
 // Ensure API logs table exists and daily cleanup is scheduled.
 ls_create_api_logs_table();
