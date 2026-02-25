@@ -108,5 +108,14 @@ function ls_add_settings_pages() {
             }
         }
     );
+
+    add_submenu_page(
+        'lightspeed-mbn',
+        'CRON CLI',
+        'CRON CLI',
+        'manage_options',
+        'ls-cron-cli',
+        'ls_render_cron_cli_page'
+    );
 }
 add_action( 'admin_menu', 'ls_add_settings_pages' );

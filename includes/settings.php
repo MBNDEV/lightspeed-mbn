@@ -11,7 +11,7 @@ function add_x_hour_cron_schedule( $schedules ) {
     ];
     return $schedules;
 }
-add_filter( 'cron_schedules', 'add_x_hour_cron_schedule' );
+// add_filter( 'cron_schedules', 'add_x_hour_cron_schedule' );
 
 function add_hourly_cron_schedule( $schedules ) {
     $schedules['every_1_hour'] = [
@@ -20,8 +20,89 @@ function add_hourly_cron_schedule( $schedules ) {
     ];
     return $schedules;
 }
-add_filter( 'cron_schedules', 'add_hourly_cron_schedule' );
+// add_filter( 'cron_schedules', 'add_hourly_cron_schedule' );
 
+/**
+ * Render the CRON CLI admin page: WP-CLI command reference for wp ls_sync_mbn.
+ */
+function ls_render_cron_cli_page() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    ?>
+    <div class="wrap">
+        <h1>CRON CLI</h1>
+        <p>Run sync via WP-CLI. Use these commands from the server (e.g. in cron) or locally with <code>wp ls_sync_mbn</code>.</p>
+
+        <h2>Available commands</h2>
+        <table class="widefat fixed" cellspacing="0" style="max-width: 900px;">
+            <thead>
+                <tr>
+                    <th style="width: 220px;">Command</th>
+                    <th>Description &amp; options</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>wp ls_sync_mbn all_items</code></td>
+                    <td>
+                        Full daily sync: “updated today” first, then remaining items. WooCommerce and/or Motors based on enabled CMFs.<br>
+                        <strong>Options:</strong> <code>--type=&lt;type&gt;</code> — <code>all</code> (default), <code>woo</code>, or <code>motors</code><br>
+                        <strong>Examples:</strong><br>
+                        <code>wp ls_sync_mbn all_items</code><br>
+                        <code>wp ls_sync_mbn all_items --type=motors</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>wp ls_sync_mbn updated_today</code></td>
+                    <td>
+                        Sync only items updated today (parts/units with lastupdatedate &gt;= today). WooCommerce and/or Motors.<br>
+                        <strong>Options:</strong> <code>--type=&lt;type&gt;</code> — <code>all</code>, <code>woo</code>, or <code>motors</code><br>
+                        <strong>Examples:</strong><br>
+                        <code>wp ls_sync_mbn updated_today</code><br>
+                        <code>wp ls_sync_mbn updated_today --type=woo</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>wp ls_sync_mbn sync_stock &lt;stock_number&gt;</code></td>
+                    <td>
+                        Sync a single motor listing by stock number.<br>
+                        <strong>Options:</strong> <code>--cmf=&lt;cmf&gt;</code> — dealer code (optional)<br>
+                        <strong>Examples:</strong><br>
+                        <code>wp ls_sync_mbn sync_stock 12345</code><br>
+                        <code>wp ls_sync_mbn sync_stock 12345 --cmf=76251145</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>wp ls_sync_mbn sync_part &lt;part_number&gt;</code></td>
+                    <td>
+                        Sync a single WooCommerce product by part number (SKU).<br>
+                        <strong>Options:</strong> <code>--cmf=&lt;cmf&gt;</code> — dealer code (optional)<br>
+                        <strong>Examples:</strong><br>
+                        <code>wp ls_sync_mbn sync_part ABC123</code><br>
+                        <code>wp ls_sync_mbn sync_part ABC123 --cmf=76251145</code>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>wp ls_sync_mbn cron_list</code></td>
+                    <td>
+                        List v2 cron hooks and next run times (when scheduled).<br>
+                        <strong>Example:</strong> <code>wp ls_sync_mbn cron_list</code>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>Cron usage</h2>
+        <p>Example crontab entries (run from site root or set <code>WP_CLI_PHP</code> / path as needed):</p>
+        <ul style="list-style: disc; margin-left: 20px;">
+            <li>Updated-today every 15 minutes: <code>*/15 * * * * wp ls_sync_mbn updated_today --path=/path/to/wordpress</code></li>
+            <li>Full daily sync once per day: <code>0 2 * * * wp ls_sync_mbn all_items --path=/path/to/wordpress</code></li>
+        </ul>
+        <p>Or use WordPress cron: <code>wp cron event run ls_sync_v2_updated_today_cron</code> / <code>wp cron event run ls_sync_v2_daily_cron</code> (if events are scheduled).</p>
+    </div>
+    <?php
+}
 
 // Render the settings page.
 function ls_render_settings_page() {
@@ -44,12 +125,12 @@ function ls_render_settings_page() {
         $retention_days = isset( $_POST['ls_log_retention_days'] ) ? max( 1, (int) $_POST['ls_log_retention_days'] ) : 30;
         update_option( 'ls_log_retention_days', $retention_days );
 
-        ls_maybe_schedule_auto_sync_cron();
+        // ls_maybe_schedule_auto_sync_cron();
 
         // Schedule daily API log cleanup if not already scheduled.
-        if ( ! wp_next_scheduled( 'ls_cleanup_api_logs' ) ) {
-            wp_schedule_event( time(), 'daily', 'ls_cleanup_api_logs' );
-        }
+        // if ( ! wp_next_scheduled( 'ls_cleanup_api_logs' ) ) {
+        //     wp_schedule_event( time(), 'daily', 'ls_cleanup_api_logs' );
+        // }
 
         echo '<div class="updated"><p>Settings saved!</p></div>';
     }
@@ -138,43 +219,44 @@ function ls_render_settings_page() {
 /**
  * Schedule or unschedule ls_auto_sync_cron and image crons based on ls_auto_sync / ls_auto_sync_motors.
  * Call after updating either list (e.g. from Sync for WooCommerce or Sync for Motor Listings).
+ * Cron scheduling commented out — use wp cron + WP-CLI (e.g. wp ls_sync_mbn) instead.
  */
 function ls_maybe_schedule_auto_sync_cron() {
-    $cron_any_enabled = ! empty( get_option( 'ls_auto_sync', [] ) ) || ! empty( get_option( 'ls_auto_sync_motors', [] ) );
-    if ( $cron_any_enabled ) {
-        if ( ! wp_next_scheduled( 'ls_auto_sync_cron' ) ) {
-            wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_cron' );
-        }
-        if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron' ) ) {
-            wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron' );
-        }
-        if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' ) ) {
-            wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_images_cron_2nd_batch' );
-        }
-        if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' ) ) {
-            wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron_check_no_image' );
-        }
-    } else {
-        $timestamp = wp_next_scheduled( 'ls_auto_sync_cron' );
-        if ( $timestamp ) {
-            wp_unschedule_event( $timestamp, 'ls_auto_sync_cron' );
-        }
-        $t3 = wp_next_scheduled( 'ls_auto_sync_images_cron' );
-        if ( $t3 ) {
-            wp_unschedule_event( $t3, 'ls_auto_sync_images_cron' );
-        }
-        $t4 = wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' );
-        if ( $t4 ) {
-            wp_unschedule_event( $t4, 'ls_auto_sync_images_cron_2nd_batch' );
-        }
-        $t5 = wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' );
-        if ( $t5 ) {
-            wp_unschedule_event( $t5, 'ls_auto_sync_images_cron_check_no_image' );
-        }
-    }
+    // $cron_any_enabled = ! empty( get_option( 'ls_auto_sync', [] ) ) || ! empty( get_option( 'ls_auto_sync_motors', [] ) );
+    // if ( $cron_any_enabled ) {
+    //     if ( ! wp_next_scheduled( 'ls_auto_sync_cron' ) ) {
+    //         wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_cron' );
+    //     }
+    //     if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron' ) ) {
+    //         wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron' );
+    //     }
+    //     if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' ) ) {
+    //         wp_schedule_event( time(), 'every_x_hour', 'ls_auto_sync_images_cron_2nd_batch' );
+    //     }
+    //     if ( ! wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' ) ) {
+    //         wp_schedule_event( time(), 'every_1_hour', 'ls_auto_sync_images_cron_check_no_image' );
+    //     }
+    // } else {
+    //     $timestamp = wp_next_scheduled( 'ls_auto_sync_cron' );
+    //     if ( $timestamp ) {
+    //         wp_unschedule_event( $timestamp, 'ls_auto_sync_cron' );
+    //     }
+    //     $t3 = wp_next_scheduled( 'ls_auto_sync_images_cron' );
+    //     if ( $t3 ) {
+    //         wp_unschedule_event( $t3, 'ls_auto_sync_images_cron' );
+    //     }
+    //     $t4 = wp_next_scheduled( 'ls_auto_sync_images_cron_2nd_batch' );
+    //     if ( $t4 ) {
+    //         wp_unschedule_event( $t4, 'ls_auto_sync_images_cron_2nd_batch' );
+    //     }
+    //     $t5 = wp_next_scheduled( 'ls_auto_sync_images_cron_check_no_image' );
+    //     if ( $t5 ) {
+    //         wp_unschedule_event( $t5, 'ls_auto_sync_images_cron_check_no_image' );
+    //     }
+    // }
 }
 
-add_action( 'ls_auto_sync_cron', 'handle_ls_auto_sync_cron' );
+// add_action( 'ls_auto_sync_cron', 'handle_ls_auto_sync_cron' );
 
 /**
  * Cron motors sync: same chunked process as admin (paged API, LS_SYNC_CHUNK_SIZE, time cap).
@@ -301,15 +383,15 @@ function handle_ls_auto_sync_cron() {
 
 
 //Add this logic to your plugin deactivation hook or a function.
-function unschedule_auto_sync_cron() {
-    $timestamp = wp_next_scheduled( 'ls_auto_sync_cron' );
-    if ( $timestamp ) {
-        wp_unschedule_event( $timestamp, 'ls_auto_sync_cron' );
-    }
-}
-register_deactivation_hook( __FILE__, 'unschedule_auto_sync_cron' );
+// function unschedule_auto_sync_cron() {
+//     $timestamp = wp_next_scheduled( 'ls_auto_sync_cron' );
+//     if ( $timestamp ) {
+//         wp_unschedule_event( $timestamp, 'ls_auto_sync_cron' );
+//     }
+// }
+// register_deactivation_hook( __FILE__, 'unschedule_auto_sync_cron' );
 
-add_action( 'ls_update_motors_status_cron', 'handle_ls_update_sync_cron' );
+// add_action( 'ls_update_motors_status_cron', 'handle_ls_update_sync_cron' );
 function handle_ls_update_sync_cron() {
     $run_id = date( 'Y-m-d_H-i-s' );
      ls_motors_log([
@@ -363,7 +445,7 @@ function get_all_listings_posts_with_stocknumber() {
     return $results;
 }
 
-add_action( 'ls_auto_sync_images_cron', 'handle_ls_auto_sync_images' );
+// add_action( 'ls_auto_sync_images_cron', 'handle_ls_auto_sync_images' );
 
 function handle_ls_auto_sync_images() {
     // Increase time limit and memory for image processing
@@ -635,7 +717,7 @@ function handle_ls_auto_sync_images() {
     error_log("handle_ls_auto_sync_images completed: Processed=$total_processed, Success=$total_success, Failed=$total_failed, BatchItems=$items_in_current_batch, Time={$total_time}s");
 }
 
-add_action( 'ls_auto_sync_images_cron_2nd_batch', 'handle_ls_auto_sync_images_2nd_batch' );
+// add_action( 'ls_auto_sync_images_cron_2nd_batch', 'handle_ls_auto_sync_images_2nd_batch' );
 
 function handle_ls_auto_sync_images_2nd_batch() {
     // Increase time limit and memory for image processing
@@ -822,7 +904,7 @@ function handle_ls_auto_sync_images_2nd_batch() {
     error_log("handle_ls_auto_sync_images_2nd_batch completed: Processed=" . ($total_processed - $total_skipped) . ", Success=$total_success, Failed=$total_failed, Skipped=$total_skipped, Time={$total_time}s");
 }
 
-add_action( 'ls_auto_sync_images_cron_check_no_image', 'handle_ls_auto_sync_images_check_no_image' );
+// add_action( 'ls_auto_sync_images_cron_check_no_image', 'handle_ls_auto_sync_images_check_no_image' );
 
 function handle_ls_auto_sync_images_check_no_image() {
     // Increase time limit and memory for image processing
