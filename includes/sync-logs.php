@@ -91,16 +91,13 @@ function ls_motors_log( $sync_data, $run_id ) {
     $stock_number  = isset( $sync_data['StockNumber'] ) ? sanitize_text_field( (string) $sync_data['StockNumber'] ) : '';
     $response_body = isset( $sync_data['response_body'] ) ? wp_unslash( $sync_data['response_body'] ) : '';
 
-    if ( isset( $sync_data['endpoint'] ) && $sync_data['endpoint'] !== '' ) {
-        $endpoint = sanitize_text_field( $sync_data['endpoint'] );
-    } else {
-        $endpoint = isset( $sync_data['action'] ) ? 'sync-event:' . sanitize_text_field( (string) $sync_data['action'] ) : 'sync-event';
-        if ( $stock_number !== '' ) {
-            $endpoint .= ':' . $stock_number;
-        }
-        if ( $response_body === '' && ( isset( $sync_data['action'] ) || isset( $sync_data['message'] ) || isset( $sync_data['listing_id'] ) ) ) {
-            $response_body = wp_json_encode( array_intersect_key( $sync_data, array_flip( [ 'action', 'message', 'listing_id', 'cmf', 'count', 'skip', 'filter', 'phase', 'error' ] ) ) );
-        }
+    if ( ! isset( $sync_data['endpoint'] ) || $sync_data['endpoint'] === '' ) {
+        return;
+    }
+    $endpoint = sanitize_text_field( $sync_data['endpoint'] );
+    // Do not log sync-event or sync-event:action:stock (e.g. sync-event:update:001429).
+    if ( $endpoint === 'sync-event' || strpos( $endpoint, 'sync-event:' ) === 0 ) {
+        return;
     }
 
     $headers     = isset( $sync_data['headers'] ) ? wp_json_encode( is_array( $sync_data['headers'] ) ? $sync_data['headers'] : (array) $sync_data['headers'] ) : '';
