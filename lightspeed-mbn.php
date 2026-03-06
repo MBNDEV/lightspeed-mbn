@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Lightspeed MBN
  * Description: A plugin to sync lightspeed products
- * Version: 3.0.2
+ * Version: 3.0.3
  * Author: MyBizNiche
  */
 
