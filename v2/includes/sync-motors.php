@@ -86,7 +86,7 @@ function ls_v2_ensure_listing_for_unit( $unit ) {
         update_post_meta( $post_id, LS_V2_META_UNIT_JSON, wp_json_encode( $unit ) );
         return $post_id;
     }
-    $status = empty( $unit['UnitStatus'] ) ? 'publish' : 'draft';
+    $status = get_motors_status( $unit );
     $post_data = [
         'post_title'   => ( $unit['ModelYear'] ?? '' ) . ' ' . ( $unit['Make'] ?? '' ) . ' ' . ( $unit['Model'] ?? '' ),
         'post_type'    => 'listings',
@@ -151,7 +151,7 @@ function ls_process_item_sync_stock_number( $unit_or_stock_number, $cmf = null )
     sync_part_to_motors( $unit, $run_id );
     sync_motors_image( $unit, $run_id );
     update_post_meta( $post_id, LS_V2_META_UNIT_JSON, wp_json_encode( $unit ) );
-    wp_update_post( [ 'ID' => $post_id, 'post_status' => empty( $unit['UnitStatus'] ) ? 'publish' : 'draft' ] );
+    wp_update_post( [ 'ID' => $post_id, 'post_status' => get_motors_status( $unit ) ] );
 
     return [ 'success' => true, 'post_id' => $post_id ];
 }

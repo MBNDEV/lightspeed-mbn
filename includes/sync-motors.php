@@ -135,7 +135,7 @@ function ls_render_sync_motors_page() {
                 $rows .= '<td>' . esc_html( $part['CodeName'] ?? '' ) . '</td><td>' . esc_html( $part['ExteriorColor'] ?? '' ) . '</td><td>' . esc_html( $part['InteriorColor'] ?? '' ) . '</td>';
                 $rows .= '<td>' . esc_html( $part['Condition'] ?? '' ) . '</td><td>' . esc_html( $part['ModelYear'] ?? '' ) . '</td><td>' . esc_html( $part['Make'] ?? '' ) . '</td>';
                 $rows .= '<td>' . esc_html( $part['Model'] ?? '' ) . '</td><td>' . esc_html( $part['Class'] ?? '' ) . '</td><td>' . esc_html( $part['FuelType'] ?? '' ) . '</td>';
-                $rows .= '<td>' . esc_html( $part['UnitType'] ?? '' ) . '</td><td>' . esc_html( $part['UnitStatus'] ?? '' ) . '</td></tr>';
+                $rows .= '<td>' . esc_html( $part['UnitType'] ?? '' ) . '</td><td>' . esc_html( $part['UnitStatus'] ?? '' ) . '</td><td>' . esc_html( function_exists( 'get_motors_status' ) ? get_motors_status( $part ) : '' ) . '</td></tr>';
             }
 
             $total_processed += $processed_this_chunk;
@@ -294,6 +294,7 @@ function ls_render_sync_motors_page() {
                         <th>EngineType</th>
                         <th>Category</th>
                         <th>Unit Status</th>
+                        <th>Real Status</th>
                     </tr>
                 </thead>
                 <tbody><?php echo $motors_synced_data['rows']; ?></tbody>
@@ -363,6 +364,7 @@ function process_sync_data( $part_data, $run_id ) {
                 <td>{$part['FuelType']}</td>
                 <td>{$part['UnitType']}</td>
                 <td>{$part['UnitStatus']}</td>
+                <td>".get_motors_status($part)."</td>
             </tr>";
     }
 
@@ -391,7 +393,7 @@ function sync_part_to_motors( $part, $run_id ) {
             'ID'         => $existing_post_id,
             'post_title' => $part['ModelYear'].' '.$part['Make'].' '.$part['Model'],
             'post_type'  => 'listings',
-            'post_status'=> 'publish',
+            'post_status'=> get_motors_status($part),
             'post_content'=> $wpbakery_content,
         );
         wp_update_post( $post_data );
@@ -402,7 +404,7 @@ function sync_part_to_motors( $part, $run_id ) {
         $post_data = array(
             'post_title'  => $part['ModelYear'].' '.$part['Make'].' '.$part['Model'],
             'post_type'   => 'listings',
-            'post_status' => 'publish',
+            'post_status' => get_motors_status($part),
             'post_content'=> $wpbakery_content,
         );
         $post_id = wp_insert_post( $post_data );
@@ -420,6 +422,9 @@ function sync_part_to_motors( $part, $run_id ) {
     if($part['UnitStatus'] === ''){
         post_meta_logs($post_id, $part, $run_id, $action);
     }
+
+    // Ensure post_status from get_motors_status is applied (in case filters or later code override it).
+    wp_update_post( [ 'ID' => $post_id, 'post_status' => get_motors_status( $part ) ] );
 
     return $post_id;
 }
@@ -681,6 +686,7 @@ function process_sync_new_data( $part_data, $run_id ) {
             <td>{$part['FuelType']}</td>
             <td>{$part['UnitType']}</td>
             <td>{$part['UnitStatus']}</td>
+            <td>".get_motors_status($part)."</td>
         </tr>";
     }
     return ['rows' => $rows, 'count' => $count];
@@ -700,7 +706,7 @@ function sync_part_to_motors_new($part, $run_id) {
         $post_data = array(
             'post_title'  => $part['CodeName'],
             'post_type'   => 'listings',
-            'post_status' => 'publish',
+            'post_status' => get_motors_status($part),
         );
         $post_id = wp_insert_post( $post_data );
 
@@ -711,6 +717,9 @@ function sync_part_to_motors_new($part, $run_id) {
         // Insert the stock_number into wp_postmeta
         add_post_meta( $post_id, 'stock_number', $part['StockNumber'] );
         post_meta_logs($post_id, $part, $run_id, 'create');
+
+        // Ensure post_status from get_motors_status is applied.
+        wp_update_post( [ 'ID' => $post_id, 'post_status' => get_motors_status( $part ) ] );
 
         return $post_id;
     }
@@ -739,6 +748,7 @@ function process_sync_review_data( $part_data, $run_id ) {
             <td>{$part['FuelType']}</td>
             <td>{$part['UnitType']}</td>
             <td>{$part['UnitStatus']}</td>
+            <td>".get_motors_status($part)."</td>
         </tr>";
     }
     return ['rows' => $rows, 'count' => $count." / ".($part_data!=NULL?count($part_data):0)];
@@ -758,35 +768,49 @@ function sync_part_to_motors_review($part, $run_id) {
     return $existing_post_id;
 }
 
-function update_motors_status( $post_id, $unit, $run_id ) {
-    if ( empty($unit) ) {
-        // No units, set to draft
-        $post_data = array(
-            'ID'         => $post_id,
-            'post_status'=> 'draft',
-        );
-    } else {
-        // Default to draft, publish if any unit has empty UnitStatus
-        $status = 'draft';
-        foreach($unit as $u) {
-            if (empty($u['UnitStatus'])) {
-                $status = 'publish';
-                break;
-            }
-        }
-        $post_data = array(
-            'ID'         => $post_id,
-            'post_status'=> $status,
-        );
+
+function get_motors_status( $unit ) {
+    if( empty( $unit )) {
+        return 'draft';
     }
 
-    wp_update_post( $post_data );
+    $status = empty( $unit['UnitStatus'] ) ? 'publish' : 'draft';
+    if( isset( $unit['WebUnit']) && $unit['WebUnit'] == 0 ) {
+        $status = 'draft';
+    }
+
+    return $status;
+}
+
+function update_motors_status( $post_id, $unit, $run_id ) {
+    // if ( empty($unit) ) {
+    //     // No units, set to draft
+    //     $post_data = array(
+    //         'ID'         => $post_id,
+    //         'post_status'=> 'draft',
+    //     );
+    // } else {
+    //     // Default to draft, publish if any unit has empty UnitStatus
+    //     $status = 'draft';
+    //     foreach($unit as $u) {
+    //         if (empty($u['UnitStatus'])) {
+    //             $status = 'publish';
+    //             break;
+    //         }
+    //     }
+    //     $post_data = array(
+    //         'ID'         => $post_id,
+    //         'post_status'=> $status,
+    //     );
+    // }
+
+    wp_update_post( [ 'ID' => $post_id, 'post_status' => get_motors_status( $unit ) ] );
     ls_motors_log( [
         'action'   => 'update_status',
         'listing_id'   => $post_id,
         'is_empty'   => empty($unit),
         'unit'   => json_encode($unit),
-        'post_status' => $post_data['post_status'],
+        'post_status' => get_motors_status( $unit ),
     ], $run_id );
 }
 
