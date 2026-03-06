@@ -363,3 +363,60 @@ function get_single_unit( $stock_number, $run_id, $cmf = null ) {
         'status_code' => $status_code
     ];
 }
+
+/**
+ * Check which of the given stock numbers exist in the LS Unit API (batch filter).
+ * Uses OData $filter with "or" for multiple StockNumber eq 'X'.
+ *
+ * @param string[] $stock_numbers Non-empty list of stock numbers to check.
+ * @param string   $cmf           CMF (dealer code).
+ * @return string[] List of stock numbers that exist in LS (subset of input). Empty on API error.
+ */
+function ls_get_unit_stock_numbers_in_ls( array $stock_numbers, $cmf ) {
+    $stock_numbers = array_filter( array_map( 'trim', $stock_numbers ) );
+    if ( empty( $stock_numbers ) ) {
+        return [];
+    }
+    $api_url  = get_option( 'ls_api_url', '' );
+    $username = get_option( 'ls_username', '' );
+    $password = get_option( 'ls_password', '' );
+    if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
+        return [];
+    }
+    $parts = [];
+    foreach ( $stock_numbers as $sn ) {
+        $safe = str_replace( "'", "''", $sn );
+        $parts[] = "StockNumber eq '" . $safe . "'";
+    }
+    $filter = implode( ' or ', $parts );
+    $top    = count( $stock_numbers );
+    $endpoint = rtrim( $api_url ) . '/Unit/' . rawurlencode( $cmf ) . '?$top=' . $top . '&$filter=' . rawurlencode( $filter );
+    error_log("ls_get_unit_stock_numbers_in_ls: Endpoint: $endpoint");
+    $headers = [
+        'Authorization' => 'Basic ' . base64_encode( $username . ':' . $password ),
+        'Content-Type'   => 'application/json',
+    ];
+    if ( ! ls_3pa_validate_before_request() ) {
+        return [];
+    }
+    $response = wp_remote_get( $endpoint, [ 'headers' => $headers, 'timeout' => 30 ] );
+    if ( is_wp_error( $response ) ) {
+        return [];
+    }
+    $body = wp_remote_retrieve_body( $response );
+    $data = json_decode( $body, true );
+    if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $data ) ) {
+        return [];
+    }
+    $units = isset( $data['value'] ) && is_array( $data['value'] ) ? $data['value'] : ( isset( $data[0] ) ? $data : [] );
+    if ( ! is_array( $units ) ) {
+        $units = [];
+    }
+    $found = [];
+    foreach ( $units as $unit ) {
+        if ( isset( $unit['StockNumber'] ) && $unit['StockNumber'] !== '' ) {
+            $found[] = (string) $unit['StockNumber'];
+        }
+    }
+    return $found;
+}
