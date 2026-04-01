@@ -157,85 +157,54 @@ function ls_process_item_sync_stock_number( $unit_or_stock_number, $cmf = null )
 }
 
 /**
- * Run daily Motors sync for one CMF: fetch updated today first, then remaining; process each immediately.
- * Skip for both phases is stored in DB (resume after error/rate limit). Empty results reset skip to 0.
+ * Run daily Motors sync for one CMF: paginate all units (no date filter), process each immediately.
+ * Skip is stored in DB (resume after error/rate limit). Empty results reset skip to 0.
  * Same listing/post meta as v1: sync_part_to_motors + sync_motors_image (post_meta_logs, taxonomies, gallery, etc.).
  * Images are processed immediately per unit — no separate cron for images.
  *
  * @param string $cmf CMF identifier.
  * @param string $run_id Run ID for logging.
  * @param int    $max_seconds Optional cap; 0 = no cap.
- * @param int    $max_items   Optional cap per "rest" run; 0 = no cap.
+ * @param int    $max_items   Optional cap per run; 0 = no cap.
  */
 function ls_v2_run_all_items_motors( $cmf, $run_id, $max_seconds = 0, $max_items = 0 ) {
-    $today_start = gmdate( 'Y-m-d' ) . 'T00:00:00';
-    $skip_today  = ls_v2_motors_get_skip( LS_V2_OPTION_MOTORS_SKIP_TODAY, $cmf );
-    $chunk       = defined( 'LS_SYNC_CHUNK_SIZE' ) ? LS_SYNC_CHUNK_SIZE : 15;
-
-    while ( true ) {
-        $data = ls_fetch_units_updated_since( $cmf, $today_start, $chunk, $skip_today, $run_id );
-        if ( is_string( $data ) ) {
-            if ( function_exists( 'ls_motors_log' ) ) {
-                ls_motors_log( [ 'error' => $data, 'phase' => 'updated_today' ], $run_id );
-            }
-            ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_TODAY, $cmf, $skip_today );
-            break;
-        }
-        $rows = ls_v2_motors_normalize_units_response( $data );
-        if ( empty( $rows ) ) {
-            ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_TODAY, $cmf, 0 );
-            if ( function_exists( 'ls_motors_log' ) ) {
-                ls_motors_log( [ 'message' => 'updated_today: no units with lastupdatedate >= today', 'cmf' => $cmf, 'filter' => $today_start ], $run_id );
-            }
-            break;
-        }
-        if ( function_exists( 'ls_motors_log' ) ) {
-            ls_motors_log( [ 'message' => 'updated_today: processing batch', 'cmf' => $cmf, 'count' => count( $rows ), 'skip' => $skip_today ], $run_id );
-        }
-        foreach ( $rows as $unit ) {
-            if ( ! is_array( $unit ) || empty( $unit['StockNumber'] ) ) {
-                continue;
-            }
-            ls_process_item_sync_stock_number( $unit, $cmf );
-            if ( $max_seconds && ( time() >= $max_seconds ) ) {
-                ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_TODAY, $cmf, $skip_today + count( $rows ) );
-                return;
-            }
-        }
-        $skip_today += count( $rows );
-        ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_TODAY, $cmf, $skip_today );
-        if ( count( $rows ) < $chunk ) {
-            ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_TODAY, $cmf, 0 );
-            break;
-        }
-    }
-
+    $chunk      = defined( 'LS_SYNC_CHUNK_SIZE' ) ? LS_SYNC_CHUNK_SIZE : 15;
     $skip_rest  = ls_v2_motors_get_skip( LS_V2_OPTION_MOTORS_SKIP_REST, $cmf );
-    $page_size = $chunk;
+    $page_size  = $chunk;
+    $processed  = 0;
+
     while ( true ) {
-        if ( ! function_exists( 'ls_sync_major_unit_page' ) ) {
-            break;
-        }
-        $data = ls_sync_major_unit_page( $cmf, $skip_rest, $page_size, $run_id );
+        $data = ls_fetch_units_updated_since( $cmf, null, $page_size, $skip_rest, $run_id );
         if ( is_string( $data ) ) {
+            if ( function_exists( 'ls_motors_log' ) ) {
+                ls_motors_log( [ 'error' => $data, 'phase' => 'all_items' ], $run_id );
+            }
             ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_REST, $cmf, $skip_rest );
             break;
         }
         $rows = ls_v2_motors_normalize_units_response( $data );
         if ( empty( $rows ) ) {
             ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_REST, $cmf, 0 );
+            if ( function_exists( 'ls_motors_log' ) ) {
+                ls_motors_log( [ 'message' => 'all_items: no more units', 'cmf' => $cmf, 'skip' => $skip_rest ], $run_id );
+            }
             break;
+        }
+        if ( function_exists( 'ls_motors_log' ) ) {
+            ls_motors_log( [ 'message' => 'all_items: processing batch', 'cmf' => $cmf, 'count' => count( $rows ), 'skip' => $skip_rest ], $run_id );
         }
         foreach ( $rows as $unit ) {
             if ( ! is_array( $unit ) || empty( $unit['StockNumber'] ) ) {
                 continue;
             }
             ls_process_item_sync_stock_number( $unit, $cmf );
+            $processed++;
             if ( $max_seconds && time() >= $max_seconds ) {
                 ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_REST, $cmf, $skip_rest + count( $rows ) );
                 return;
             }
-            if ( $max_items && $skip_rest >= $max_items ) {
+            if ( $max_items && $processed >= $max_items ) {
+                ls_v2_motors_set_skip( LS_V2_OPTION_MOTORS_SKIP_REST, $cmf, $skip_rest + count( $rows ) );
                 return;
             }
         }

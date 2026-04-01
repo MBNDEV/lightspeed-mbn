@@ -19,25 +19,32 @@ function ls_v2_3pa_rate_limit_ok() {
 }
 
 /**
- * Shared: fetch resource (Unit or Part) updated since datetime. OData filter: lastupdatedate ge datetime'...'.
+ * Shared: fetch resource (Unit or Part). Optional OData filter: lastupdatedate ge datetime'...'.
  *
- * @param string     $resource  'Unit' or 'Part'.
- * @param string     $orderby   'StockNumber' or 'PartNumber'.
- * @param string     $cmf       CMF identifier.
- * @param string     $datetime_odata Date in OData format e.g. '2026-02-25T00:00:00'.
- * @param int        $top       Number to fetch.
- * @param int        $skip      Number of records to skip.
- * @param string|null $run_id   Run ID for API logging.
+ * When $datetime_odata is null or empty, no date filter is applied (all items for $top/$skip page).
+ *
+ * @param string      $resource  'Unit' or 'Part'.
+ * @param string      $orderby   'StockNumber' or 'PartNumber'.
+ * @param string      $cmf       CMF identifier.
+ * @param string|null $datetime_odata Date in OData format e.g. '2026-02-25T00:00:00', or null/'' for no filter.
+ * @param int         $top       Number to fetch.
+ * @param int         $skip      Number of records to skip.
+ * @param string|null $run_id    Run ID for API logging.
  * @return array|string Decoded data array or error string.
  */
-function ls_fetch_updated_since( $resource, $orderby, $cmf, $datetime_odata, $top = 15, $skip = 0, $run_id = null ) {
+function ls_fetch_updated_since( $resource, $orderby, $cmf, $datetime_odata = null, $top = 15, $skip = 0, $run_id = null ) {
     $top  = max( 1, min( (int) $top, defined( 'LS_SYNC_PAGE_SIZE_MAX' ) ? LS_SYNC_PAGE_SIZE_MAX : 500 ) );
     $skip = max( 0, (int) $skip );
     $api_url   = get_option( 'ls_api_url', '' );
     $username  = get_option( 'ls_username', '' );
     $password  = get_option( 'ls_password', '' );
-    $safe_date = str_replace( "'", "''", $datetime_odata );
-    $endpoint  = rtrim( $api_url ) . '/' . $resource . '/' . rawurlencode( $cmf ) . '?$top=' . $top . '&$skip=' . $skip . '&$filter=lastupdatedate ge datetime\'' . $safe_date . '\'&$orderby=' . $orderby;
+    $use_date  = $datetime_odata !== null && $datetime_odata !== '';
+    if ( $use_date ) {
+        $safe_date = str_replace( "'", "''", $datetime_odata );
+        $endpoint  = rtrim( $api_url ) . '/' . $resource . '/' . rawurlencode( $cmf ) . '?$top=' . $top . '&$skip=' . $skip . '&$filter=lastupdatedate ge datetime\'' . $safe_date . '\'&$orderby=' . $orderby;
+    } else {
+        $endpoint = rtrim( $api_url ) . '/' . $resource . '/' . rawurlencode( $cmf ) . '?$top=' . $top . '&$skip=' . $skip . '&$orderby=' . $orderby;
+    }
 
     if ( empty( $api_url ) || empty( $username ) || empty( $password ) ) {
         if ( $run_id !== null && $run_id !== '' && function_exists( 'ls_motors_log' ) ) {
@@ -80,30 +87,30 @@ function ls_fetch_updated_since( $resource, $orderby, $cmf, $datetime_odata, $to
 }
 
 /**
- * Fetch units updated since a given datetime (OData filter: lastupdatedate ge datetime'...').
+ * Fetch units. Optional OData filter: lastupdatedate ge datetime'...' when $datetime_odata is set.
  *
- * @param string     $cmf       CMF identifier.
- * @param string     $datetime_odata Date in OData format e.g. '2026-02-25T00:00:00'.
- * @param int        $top       Number to fetch (capped at LS_SYNC_PAGE_SIZE_MAX from includes).
- * @param int        $skip      Number of records to skip.
- * @param string|null $run_id   Run ID for API logging.
+ * @param string      $cmf              CMF identifier.
+ * @param string|null $datetime_odata   Date e.g. '2026-02-25T00:00:00', or null/'' for all units (paginated by $top/$skip).
+ * @param int         $top              Number to fetch (capped at LS_SYNC_PAGE_SIZE_MAX from includes).
+ * @param int         $skip             Number of records to skip.
+ * @param string|null $run_id           Run ID for API logging.
  * @return array|string Decoded data array or error string.
  */
-function ls_fetch_units_updated_since( $cmf, $datetime_odata, $top = 15, $skip = 0, $run_id = null ) {
+function ls_fetch_units_updated_since( $cmf, $datetime_odata = null, $top = 15, $skip = 0, $run_id = null ) {
     return ls_fetch_updated_since( 'Unit', 'StockNumber', $cmf, $datetime_odata, $top, $skip, $run_id );
 }
 
 /**
- * Fetch parts updated since a given datetime (OData filter: lastupdatedate ge datetime'...').
+ * Fetch parts. Optional OData filter: lastupdatedate ge datetime'...' when $datetime_odata is set.
  *
- * @param string     $cmf       CMF identifier.
- * @param string     $datetime_odata Date in OData format e.g. '2026-02-25T00:00:00'.
- * @param int        $top       Number to fetch.
- * @param int        $skip      Number of records to skip.
- * @param string|null $run_id   Run ID for API logging.
+ * @param string      $cmf              CMF identifier.
+ * @param string|null $datetime_odata   Date e.g. '2026-02-25T00:00:00', or null/'' for all parts (paginated).
+ * @param int         $top              Number to fetch.
+ * @param int         $skip             Number of records to skip.
+ * @param string|null $run_id           Run ID for API logging.
  * @return array|string Decoded data array or error string.
  */
-function ls_fetch_parts_updated_since( $cmf, $datetime_odata, $top = 15, $skip = 0, $run_id = null ) {
+function ls_fetch_parts_updated_since( $cmf, $datetime_odata = null, $top = 15, $skip = 0, $run_id = null ) {
     return ls_fetch_updated_since( 'Part', 'PartNumber', $cmf, $datetime_odata, $top, $skip, $run_id );
 }
 
