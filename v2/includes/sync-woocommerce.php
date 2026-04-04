@@ -88,6 +88,7 @@ function ls_v2_ensure_product_for_part( $part ) {
     $product_id = wc_get_product_id_by_sku( $part_number );
     if ( $product_id ) {
         update_post_meta( $product_id, LS_V2_META_PART_JSON, wp_json_encode( $part ) );
+        ls_v2_redirection_delete_source_for_post( $product_id );
         return $product_id;
     }
     if ( ! class_exists( 'WC_Product_Simple' ) ) {
@@ -103,6 +104,7 @@ function ls_v2_ensure_product_for_part( $part ) {
         return 0;
     }
     update_post_meta( $product_id, LS_V2_META_PART_JSON, wp_json_encode( $part ) );
+    ls_v2_redirection_delete_source_for_post( $product_id );
     return $product_id;
 }
 

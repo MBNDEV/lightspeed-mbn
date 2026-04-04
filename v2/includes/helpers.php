@@ -28,3 +28,59 @@ function ls_get_listing_post_id_by_stock_number( $stock_number ) {
     ) );
     return $post_id ? (int) $post_id : null;
 }
+
+/**
+ * Delete Redirection rules whose source matches this post’s permalink path (`url` or `match_url`, non-regex only).
+ * Uses {@see Red_Item::delete()} so {@see Red_Module::flush()} runs per group like the REST/UI delete flow.
+ *
+ * @param int $post_id Post ID (listings, product, etc.).
+ */
+function ls_v2_redirection_delete_source_for_post( $post_id ) {
+    $post_id = (int) $post_id;
+    if ( $post_id <= 0 || ! class_exists( 'Red_Item' ) ) {
+        return;
+    }
+    $permalink = get_permalink( $post_id );
+    if ( ! $permalink ) {
+        return;
+    }
+    $path = wp_parse_url( $permalink, PHP_URL_PATH );
+    if ( ! is_string( $path ) || $path === '' || $path === '/' ) {
+        return;
+    }
+    $base     = untrailingslashit( $path );
+    $variants = array_unique(
+        array_filter(
+            [
+                $path,
+                $base,
+                trailingslashit( $base ),
+            ]
+        )
+    );
+    global $wpdb;
+    $table = $wpdb->prefix . 'redirection_items';
+    if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+        return;
+    }
+    $ids = [];
+    foreach ( $variants as $v ) {
+        $rows = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT id FROM {$table} WHERE ( url = %s OR match_url = %s ) AND regex = 0",
+                $v,
+                $v
+            )
+        );
+        foreach ( (array) $rows as $rid ) {
+            $ids[] = (int) $rid;
+        }
+    }
+    $ids = array_unique( array_filter( $ids ) );
+    foreach ( $ids as $id ) {
+        $item = Red_Item::get_by_id( $id );
+        if ( $item ) {
+            $item->delete();
+        }
+    }
+}

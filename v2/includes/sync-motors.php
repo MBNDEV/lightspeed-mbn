@@ -84,6 +84,7 @@ function ls_v2_ensure_listing_for_unit( $unit ) {
     $post_id = ls_get_listing_post_id_by_stock_number( $stock_number );
     if ( $post_id ) {
         update_post_meta( $post_id, LS_V2_META_UNIT_JSON, wp_json_encode( $unit ) );
+        ls_v2_redirection_delete_source_for_post( $post_id );
         return $post_id;
     }
     $status = get_motors_status( $unit );
@@ -99,6 +100,7 @@ function ls_v2_ensure_listing_for_unit( $unit ) {
     }
     add_post_meta( $post_id, 'stock_number', $stock_number );
     update_post_meta( $post_id, LS_V2_META_UNIT_JSON, wp_json_encode( $unit ) );
+    ls_v2_redirection_delete_source_for_post( $post_id );
     return $post_id;
 }
 
